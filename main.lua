@@ -2606,7 +2606,9 @@ function Starlight:CreateWindow(WindowSettings)
 		mainWindow.ModalOverlay.Visible = true
 
 		mainWindow.Size = WindowSettings.DefaultSize ~= nil and WindowSettings.DefaultSize or mainWindow.Size
-		if (GUICanvasSize.X - 50) <= mainWindow.AbsoluteSize.X then
+		if GUICanvasSize.X < 500 then
+			mainWindow.Size = UDim2.new(0, math.max(GUICanvasSize.X - 10, 300), mainWindow.Size.Y.Scale, mainWindow.Size.Y.Offset)
+		elseif (GUICanvasSize.X - 50) < mainWindow.AbsoluteSize.X then
 			mainWindow.Size = UDim2.new(0, GUICanvasSize.X - 50, mainWindow.Size.Y.Scale, mainWindow.Size.Y.Offset)
 		end
 		if (GUICanvasSize.Y - 50) <= mainWindow.AbsoluteSize.Y then
@@ -3938,6 +3940,10 @@ function Starlight:CreateWindow(WindowSettings)
 
 			TabSettings.Icon = TabSettings.Icon or ""
 			TabSettings.Columns = TabSettings.Columns or 2
+			-- On mobile screens, force single column layout for better fit
+			if GUICanvasSize.X < 500 then
+				TabSettings.Columns = 1
+			end
 			local Tab = {
 				Instances = {},
 				Values = TabSettings,
