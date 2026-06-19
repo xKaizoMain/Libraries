@@ -1835,6 +1835,9 @@ end
 -- A Function to make an object movable via dragging another object
 -- Taken From Luna Interface Suite, A Nebula Softworks Product
 local function makeDraggable(Bar, Window: Frame, dragBar, enableTaptic, tapticOffset)
+	if IsMobile then
+		return
+	end
 	pcall(function()
 		local Dragging, DragInput, MousePos, FramePos
 
@@ -2101,6 +2104,37 @@ local Resizing = false -- Not Implemented as of Alpha Release 2
 local ResizePos = false -- Not Implemented as of Alpha Release 2
 
 local GUICanvasSize = { X = Camera.ViewportSize.X, Y = Camera.ViewportSize.Y - GuiInset }
+
+--// ENDSUBSECTION
+
+--// SUBSECTION : Device Detection
+
+local function getDeviceType(): string
+	local platform = UserInputService:GetPlatform()
+	local TABLET_THRESHOLD = 600
+
+	if platform == Enum.Platform.XBoxOne or platform == Enum.Platform.PS4 or platform == Enum.Platform.PS5 then
+		return "Console"
+	elseif platform == Enum.Platform.Windows or platform == Enum.Platform.OSX or platform == Enum.Platform.UWP then
+		return "PC"
+	elseif platform == Enum.Platform.IOS or platform == Enum.Platform.Android then
+		local viewportSize = Camera.ViewportSize
+		local smallerAxis = math.min(viewportSize.X, viewportSize.Y)
+		return if smallerAxis >= TABLET_THRESHOLD then "Tablet" else "Mobile"
+	else
+		if UserInputService.TouchEnabled then
+			local smallerAxis = math.min(Camera.ViewportSize.X, Camera.ViewportSize.Y)
+			return if smallerAxis >= TABLET_THRESHOLD then "Tablet" else "Mobile"
+		elseif UserInputService.GamepadEnabled then
+			return "Console"
+		else
+			return "PC"
+		end
+	end
+end
+
+local DeviceType = getDeviceType()
+local IsMobile = DeviceType == "Mobile"
 
 --// ENDSUBSECTION
 
@@ -2605,14 +2639,39 @@ function Starlight:CreateWindow(WindowSettings)
 		mainWindow["New Loading Screen"].Visible = true
 		mainWindow.ModalOverlay.Visible = true
 
-		mainWindow.Size = WindowSettings.DefaultSize ~= nil and WindowSettings.DefaultSize or mainWindow.Size
-		if GUICanvasSize.X < 500 then
-			mainWindow.Size = UDim2.new(0, math.max(GUICanvasSize.X - 10, 300), mainWindow.Size.Y.Scale, mainWindow.Size.Y.Offset)
-		elseif (GUICanvasSize.X - 50) < mainWindow.AbsoluteSize.X then
-			mainWindow.Size = UDim2.new(0, GUICanvasSize.X - 50, mainWindow.Size.Y.Scale, mainWindow.Size.Y.Offset)
+		if IsMobile then
+			mainWindow.Size = UDim2.new(1, 0, 1, 0)
+			mainWindow.Sidebar.Size = UDim2.new(0, 0, 1, 0)
+			mainWindow.Sidebar.Visible = false
+			mainWindow.Sidebar.Active = false
+			mainWindow.Content.Size = UDim2.new(1, 0, 1, 0)
+			StarlightUI.Notifications.Visible = false
+		else
+			mainWindow.Size = WindowSettings.DefaultSize ~= nil and WindowSettings.DefaultSize or mainWindow.Size
+			if (GUICanvasSize.X - 50) < mainWindow.AbsoluteSize.X then
+				mainWindow.Size = UDim2.new(0, GUICanvasSize.X - 50, mainWindow.Size.Y.Scale, mainWindow.Size.Y.Offset)
+			end
 		end
 		if (GUICanvasSize.Y - 50) <= mainWindow.AbsoluteSize.Y then
 			mainWindow.Size = UDim2.new(mainWindow.Size.X.Scale, mainWindow.Size.X.Offset, 0, GUICanvasSize.Y - 50)
+		end
+
+		mainWindow.ClipsDescendants = true
+		mainWindow.Content.ClipsDescendants = true
+		mainWindow.Content.ContentMain.ClipsDescendants = true
+		mainWindow.Content.ContentMain.Elements.ClipsDescendants = true
+		StarlightUI.ClipsDescendants = true
+
+		if mainWindow.Content.ContentMain.Elements:FindFirstChild("UIPageLayout") then
+			mainWindow.Content.ContentMain.Elements.UIPageLayout.Orientation = Enum.Orientation.Vertical
+		end
+
+		for _, col in ipairs(mainWindow.Content.ContentMain.Elements:GetChildren()) do
+			if col.ClassName == "ScrollingFrame" then
+				col.ClipsDescendants = true
+				col.ScrollingDirection = Enum.ScrollingDirection.Y
+				col.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+			end
 		end
 
 		mainWindow.Sidebar.Icon.Image = WindowSettings.Icon ~= nil and "rbxassetid://" .. WindowSettings.Icon or ""
@@ -2623,19 +2682,26 @@ function Starlight:CreateWindow(WindowSettings)
 
 		local size = mainWindow.Size
 		mainWindow.Size = WindowSettings.LoadingEnabled and UDim2.fromOffset(500, 325) or mainWindow.Size
-		StarlightUI.MainWindow.Position = UDim2.fromOffset(
-			Camera.ViewportSize.X / 2 - StarlightUI.MainWindow.Size.X.Offset / 2,
-			((Camera.ViewportSize.Y / 2 - GuiInset) - StarlightUI.MainWindow.Size.Y.Offset / 2) - (GuiInset / 2)
-		)
-		StarlightUI.Drag.Position = UDim2.new(
-			0.5,
-			0,
-			0,
-			((Camera.ViewportSize.Y / 2 - GuiInset) - StarlightUI.MainWindow.Size.Y.Offset / 2)
-				- (GuiInset / 2)
-				+ mainWindow.Size.Y.Offset
-				+ 10
-		)
+
+		if IsMobile then
+			StarlightUI.MainWindow.Position = UDim2.new(0, 0, 0, 0)
+			StarlightUI.MainWindow.Size = UDim2.new(1, 0, 1, 0)
+			StarlightUI.Drag.Visible = false
+		else
+			StarlightUI.MainWindow.Position = UDim2.fromOffset(
+				Camera.ViewportSize.X / 2 - StarlightUI.MainWindow.Size.X.Offset / 2,
+				((Camera.ViewportSize.Y / 2 - GuiInset) - StarlightUI.MainWindow.Size.Y.Offset / 2) - (GuiInset / 2)
+			)
+			StarlightUI.Drag.Position = UDim2.new(
+				0.5,
+				0,
+				0,
+				((Camera.ViewportSize.Y / 2 - GuiInset) - StarlightUI.MainWindow.Size.Y.Offset / 2)
+					- (GuiInset / 2)
+					+ mainWindow.Size.Y.Offset
+					+ 10
+			)
+		end
 
 		mainWindow.ModalOverlay.Visible = false
 		--[[mainWindow["Loading Screen"].Version.Text = WindowSettings.LoadingSettings.Title == "Starlight Interface Suite" and Release or "Starlight Interface Suite " .. Release
@@ -3940,8 +4006,7 @@ function Starlight:CreateWindow(WindowSettings)
 
 			TabSettings.Icon = TabSettings.Icon or ""
 			TabSettings.Columns = TabSettings.Columns or 2
-			-- On mobile screens, force single column layout for better fit
-			if GUICanvasSize.X < 500 then
+			if IsMobile then
 				TabSettings.Columns = 1
 			end
 			local Tab = {
@@ -4057,6 +4122,10 @@ function Starlight:CreateWindow(WindowSettings)
 				column.Parent = Tab.Instances.Page
 				column.LayoutOrder = i
 				column.Name = "Column_" .. i
+				column.ClipsDescendants = true
+				column.ScrollingDirection = Enum.ScrollingDirection.Y
+				column.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+				column.CanvasSize = UDim2.new(0, 0, 0, 0)
 				for i, v in column:GetChildren() do
 					if v.ClassName == "Frame" then
 						v:Destroy()
@@ -7708,22 +7777,14 @@ function Starlight:CreateWindow(WindowSettings)
 										or input.UserInputType == Enum.UserInputType.Touch
 									then
 										if mainDragging then
-											Tween(
-												NestedElement.Instances[2].Container.Color.ColorPicker.Point,
-												{
-													Size = mainHover and UDim2.new(0, 10, 0, 10)
-														or UDim2.new(0, 7, 0, 7),
-												}
-											)
+											Tween(NestedElement.Instances[2].Container.Color.ColorPicker.Point, {
+												Size = mainHover and UDim2.new(0, 10, 0, 10) or UDim2.new(0, 7, 0, 7),
+											})
 										end
 										if sliderDragging then
-											Tween(
-												NestedElement.Instances[2].Container.Color.HueSlider.Value.Knob,
-												{
-													Size = sliderHover and UDim2.new(0, 8, 0, 8)
-														or UDim2.new(0, 6, 0, 6),
-												}
-											)
+											Tween(NestedElement.Instances[2].Container.Color.HueSlider.Value.Knob, {
+												Size = sliderHover and UDim2.new(0, 8, 0, 8) or UDim2.new(0, 6, 0, 6),
+											})
 										end
 										if transDragging then
 											Tween(
