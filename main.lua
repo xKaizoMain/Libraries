@@ -1444,21 +1444,29 @@ local function Hide(Interface, JustHide: boolean?, Notify: boolean?, Bind: strin
 
 			-- Actually Hide The Stuff
 			if v.ClassName == "Frame" then
-				Tween(v, { BackgroundTransparency = 1 })
+				pcall(function()
+					v.BackgroundTransparency = 1
+				end)
 			end
 
 			if v.ClassName == "TextLabel" or v.ClassName == "TextBox" or v.ClassName == "TextButton" then
-				Tween(v, { BackgroundTransparency = 1 })
-				Tween(v, { TextTransparency = 1 })
+				pcall(function()
+					v.BackgroundTransparency = 1
+					v.TextTransparency = 1
+				end)
 			end
 
 			if v.ClassName == "ImageLabel" or v.ClassName == "ImageButton" then
-				Tween(v, { BackgroundTransparency = 1 })
-				Tween(v, { ImageTransparency = 1 })
+				pcall(function()
+					v.BackgroundTransparency = 1
+					v.ImageTransparency = 1
+				end)
 			end
 
-			if v.ClassName == "UIStroke" or Interface.ClassName == "UIGradient" then
-				Tween(v, { Transparency = 1 })
+			if v.ClassName == "UIStroke" or v.ClassName == "UIGradient" then
+				pcall(function()
+					v.Transparency = 1
+				end)
 			end
 		end
 	end
@@ -1500,9 +1508,16 @@ local function Hide(Interface, JustHide: boolean?, Notify: boolean?, Bind: strin
 			end
 		end
 
-		-- Actually Hide The Stuff
+		-- Actually Hide The Stuff (apply instantly)
+		local iid = nil
+		pcall(function()
+			iid = Interface:GetAttribute("InstanceID")
+		end)
+		local entry = TransparencyValues[Interface.Name] and TransparencyValues[Interface.Name][iid]
 		if Interface.ClassName == "Frame" then
-			Tween(Interface, { BackgroundTransparency = 1 })
+			pcall(function()
+				Interface.BackgroundTransparency = 1
+			end)
 		end
 
 		if
@@ -1510,17 +1525,23 @@ local function Hide(Interface, JustHide: boolean?, Notify: boolean?, Bind: strin
 			or Interface.ClassName == "TextBox"
 			or Interface.ClassName == "TextButton"
 		then
-			Tween(Interface, { BackgroundTransparency = 1 })
-			Tween(Interface, { TextTransparency = 1 })
+			pcall(function()
+				Interface.BackgroundTransparency = 1
+				Interface.TextTransparency = 1
+			end)
 		end
 
 		if Interface.ClassName == "ImageLabel" or Interface.ClassName == "ImageButton" then
-			Tween(Interface, { BackgroundTransparency = 1 })
-			Tween(Interface, { ImageTransparency = 1 })
+			pcall(function()
+				Interface.BackgroundTransparency = 1
+				Interface.ImageTransparency = 1
+			end)
 		end
 
 		if Interface.ClassName == "UIStroke" or Interface.ClassName == "UIGradient" then
-			Tween(Interface, { Transparency = 1 })
+			pcall(function()
+				Interface.Transparency = 1
+			end)
 		end
 	end
 
@@ -1545,7 +1566,7 @@ local function Hide(Interface, JustHide: boolean?, Notify: boolean?, Bind: strin
 		end
 	end
 
-	task.wait(0.18)
+	-- Immediately disable visibility instead of waiting for tweens
 	if Interface.ClassName == "ScreenGui" then
 		Interface.Enabled = false
 	else
@@ -1595,50 +1616,49 @@ local function Unhide(Interface)
 			and v.ClassName ~= "UIAspectRatioConstraint"
 		then
 			pcall(function()
-				if
-					(v.ClassName == "Frame")
-					and TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].BackgroundTransparency
-						~= nil
-				then
-					Tween(v, {
-						BackgroundTransparency = TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].BackgroundTransparency,
-					})
+				local ok, id = pcall(function()
+					return v:GetAttribute("InstanceID")
+				end)
+				if not ok or not id then
+					continue
+				end
+				local entry = TransparencyValues[Interface.Name] and TransparencyValues[Interface.Name][id]
+				if type(entry) ~= "table" then
+					continue
+				end
+
+				if v.ClassName == "Frame" and entry.BackgroundTransparency ~= nil then
+					pcall(function()
+						v.BackgroundTransparency = entry.BackgroundTransparency
+					end)
 				end
 
 				if
 					(v.ClassName == "TextLabel" or v.ClassName == "TextBox" or v.ClassName == "TextButton")
-					and TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].BackgroundTransparency ~= nil
-					and TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].TextTransparency ~= nil
+					and entry.BackgroundTransparency ~= nil
+					and entry.TextTransparency ~= nil
 				then
-					Tween(v, {
-						BackgroundTransparency = TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].BackgroundTransparency,
-					})
-					Tween(v, {
-						TextTransparency = TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].TextTransparency,
-					})
+					pcall(function()
+						v.BackgroundTransparency = entry.BackgroundTransparency
+						v.TextTransparency = entry.TextTransparency
+					end)
 				end
 
 				if
 					(v.ClassName == "ImageLabel" or v.ClassName == "ImageButton")
-					and TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].BackgroundTransparency ~= nil
-					and TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].ImageTransparency
+					and entry.BackgroundTransparency ~= nil
+					and entry.ImageTransparency ~= nil
 				then
-					Tween(v, {
-						BackgroundTransparency = TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].BackgroundTransparency,
-					})
-					Tween(v, {
-						ImageTransparency = TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].ImageTransparency,
-					})
+					pcall(function()
+						v.BackgroundTransparency = entry.BackgroundTransparency
+						v.ImageTransparency = entry.ImageTransparency
+					end)
 				end
 
-				if
-					(v.ClassName == "UIStroke" or Interface.ClassName == "UIGradient")
-					and TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].Transparency
-				then
-					Tween(
-						v,
-						{ Transparency = TransparencyValues[Interface.Name][v:GetAttribute("InstanceID")].Transparency }
-					)
+				if (v.ClassName == "UIStroke" or v.ClassName == "UIGradient") and entry.Transparency ~= nil then
+					pcall(function()
+						v.Transparency = entry.Transparency
+					end)
 				end
 			end)
 		end
@@ -1646,53 +1666,53 @@ local function Unhide(Interface)
 
 	pcall(function()
 		if Interface.ClassName ~= "ScreenGui" then
-			if
-				(Interface.ClassName == "Frame")
-				and TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].BackgroundTransparency
-					~= nil
-			then
-				Tween(Interface, {
-					BackgroundTransparency = TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].BackgroundTransparency,
-				})
-			end
+			local ok, iid = pcall(function()
+				return Interface:GetAttribute("InstanceID")
+			end)
+			if ok and iid then
+				local entry = TransparencyValues[Interface.Name] and TransparencyValues[Interface.Name][iid]
+				if type(entry) == "table" then
+					if Interface.ClassName == "Frame" and entry.BackgroundTransparency ~= nil then
+						pcall(function()
+							Interface.BackgroundTransparency = entry.BackgroundTransparency
+						end)
+					end
 
-			if
-				(
-					Interface.ClassName == "TextLabel"
-					or Interface.ClassName == "TextBox"
-					or Interface.ClassName == "TextButton"
-				)
-				and TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].BackgroundTransparency ~= nil
-				and TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].TextTransparency ~= nil
-			then
-				Tween(Interface, {
-					BackgroundTransparency = TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].BackgroundTransparency,
-				})
-				Tween(Interface, {
-					TextTransparency = TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].TextTransparency,
-				})
-			end
+					if
+						(
+							Interface.ClassName == "TextLabel"
+							or Interface.ClassName == "TextBox"
+							or Interface.ClassName == "TextButton"
+						)
+						and entry.BackgroundTransparency ~= nil
+						and entry.TextTransparency ~= nil
+					then
+						pcall(function()
+							Interface.BackgroundTransparency = entry.BackgroundTransparency
+							Interface.TextTransparency = entry.TextTransparency
+						end)
+					end
 
-			if
-				(Interface.ClassName == "ImageLabel" or Interface.ClassName == "ImageButton")
-				and TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].BackgroundTransparency ~= nil
-				and TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].ImageTransparency
-			then
-				Tween(Interface, {
-					BackgroundTransparency = TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].BackgroundTransparency,
-				})
-				Tween(Interface, {
-					ImageTransparency = TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].ImageTransparency,
-				})
-			end
+					if
+						(Interface.ClassName == "ImageLabel" or Interface.ClassName == "ImageButton")
+						and entry.BackgroundTransparency ~= nil
+						and entry.ImageTransparency ~= nil
+					then
+						pcall(function()
+							Interface.BackgroundTransparency = entry.BackgroundTransparency
+							Interface.ImageTransparency = entry.ImageTransparency
+						end)
+					end
 
-			if
-				(Interface.ClassName == "UIStroke" or Interface.ClassName == "UIGradient")
-				and TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].Transparency
-			then
-				Tween(Interface, {
-					Transparency = TransparencyValues[Interface.Name][Interface:GetAttribute("InstanceID")].Transparency,
-				})
+					if
+						(Interface.ClassName == "UIStroke" or Interface.ClassName == "UIGradient")
+						and entry.Transparency ~= nil
+					then
+						pcall(function()
+							Interface.Transparency = entry.Transparency
+						end)
+					end
+				end
 			end
 		end
 	end)
