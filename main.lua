@@ -1987,8 +1987,9 @@ end
 -- Interface Model
 local modelId = debugV and 136653172778765 or 132866968194043
 
-local StarlightUI: ScreenGui = isStudio and script.Parent:WaitForChild("Starlight V2")
-	or game:GetObjects("rbxassetid://" .. modelId)[1]
+local StarlightUI = (
+	isStudio and script.Parent:WaitForChild("Starlight V2") or game:GetObjects("rbxassetid://" .. modelId)[1]
+) :: any
 local buildAttempts = 0
 local correctBuild = false
 local warned = false
@@ -2004,7 +2005,9 @@ repeat
 
 	toDestroy, StarlightUI =
 		StarlightUI,
-		isStudio and script.Parent:FindFirstChild("Starlight V2") or game:GetObjects("rbxassetid://" .. modelId)[1]
+		(
+			isStudio and script.Parent:FindFirstChild("Starlight V2") or game:GetObjects("rbxassetid://" .. modelId)[1]
+		) :: any
 	if toDestroy and not isStudio then
 		toDestroy:Destroy()
 	end
@@ -2660,10 +2663,34 @@ function Starlight:CreateWindow(WindowSettings)
 		mainWindow.Content.ClipsDescendants = true
 		mainWindow.Content.ContentMain.ClipsDescendants = true
 		mainWindow.Content.ContentMain.Elements.ClipsDescendants = true
-		StarlightUI.ClipsDescendants = true
 
 		if mainWindow.Content.ContentMain.Elements:FindFirstChild("UIPageLayout") then
-			mainWindow.Content.ContentMain.Elements.UIPageLayout.Orientation = Enum.Orientation.Vertical
+			local pageLayout = mainWindow.Content.ContentMain.Elements.UIPageLayout
+			-- Only set a property if it actually exists on the instance to avoid runtime errors
+			local hasOrientation = pcall(function()
+				local _ = pageLayout.Orientation
+			end)
+			if hasOrientation then
+				local ok, val = pcall(function()
+					return Enum.PageOrientation and Enum.PageOrientation.Vertical
+				end)
+				if ok and val then
+					pageLayout.Orientation = val
+				end
+			else
+				-- Fallback: if the PageLayout exposes FillDirection, set that instead
+				local hasFill = pcall(function()
+					local _ = pageLayout.FillDirection
+				end)
+				if hasFill then
+					local ok2, val2 = pcall(function()
+						return Enum.FillDirection and Enum.FillDirection.Vertical
+					end)
+					if ok2 and val2 then
+						pageLayout.FillDirection = val2
+					end
+				end
+			end
 		end
 
 		for _, col in ipairs(mainWindow.Content.ContentMain.Elements:GetChildren()) do
