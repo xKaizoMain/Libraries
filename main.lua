@@ -1619,46 +1619,43 @@ local function Unhide(Interface)
 				local ok, id = pcall(function()
 					return v:GetAttribute("InstanceID")
 				end)
-				if not ok or not id then
-					continue
-				end
-				local entry = TransparencyValues[Interface.Name] and TransparencyValues[Interface.Name][id]
-				if type(entry) ~= "table" then
-					continue
-				end
+				if ok and id then
+					local entry = TransparencyValues[Interface.Name] and TransparencyValues[Interface.Name][id]
+					if type(entry) == "table" then
+						if v.ClassName == "Frame" and entry.BackgroundTransparency ~= nil then
+							pcall(function()
+								v.BackgroundTransparency = entry.BackgroundTransparency
+							end)
+						end
 
-				if v.ClassName == "Frame" and entry.BackgroundTransparency ~= nil then
-					pcall(function()
-						v.BackgroundTransparency = entry.BackgroundTransparency
-					end)
-				end
+						if
+							(v.ClassName == "TextLabel" or v.ClassName == "TextBox" or v.ClassName == "TextButton")
+							and entry.BackgroundTransparency ~= nil
+							and entry.TextTransparency ~= nil
+						then
+							pcall(function()
+								v.BackgroundTransparency = entry.BackgroundTransparency
+								v.TextTransparency = entry.TextTransparency
+							end)
+						end
 
-				if
-					(v.ClassName == "TextLabel" or v.ClassName == "TextBox" or v.ClassName == "TextButton")
-					and entry.BackgroundTransparency ~= nil
-					and entry.TextTransparency ~= nil
-				then
-					pcall(function()
-						v.BackgroundTransparency = entry.BackgroundTransparency
-						v.TextTransparency = entry.TextTransparency
-					end)
-				end
+						if
+							(v.ClassName == "ImageLabel" or v.ClassName == "ImageButton")
+							and entry.BackgroundTransparency ~= nil
+							and entry.ImageTransparency ~= nil
+						then
+							pcall(function()
+								v.BackgroundTransparency = entry.BackgroundTransparency
+								v.ImageTransparency = entry.ImageTransparency
+							end)
+						end
 
-				if
-					(v.ClassName == "ImageLabel" or v.ClassName == "ImageButton")
-					and entry.BackgroundTransparency ~= nil
-					and entry.ImageTransparency ~= nil
-				then
-					pcall(function()
-						v.BackgroundTransparency = entry.BackgroundTransparency
-						v.ImageTransparency = entry.ImageTransparency
-					end)
-				end
-
-				if (v.ClassName == "UIStroke" or v.ClassName == "UIGradient") and entry.Transparency ~= nil then
-					pcall(function()
-						v.Transparency = entry.Transparency
-					end)
+						if (v.ClassName == "UIStroke" or v.ClassName == "UIGradient") and entry.Transparency ~= nil then
+							pcall(function()
+								v.Transparency = entry.Transparency
+							end)
+						end
+					end
 				end
 			end)
 		end
@@ -5307,6 +5304,7 @@ function Starlight:CreateWindow(WindowSettings)
 
 					local Instances
 					task.spawn(function()
+						if not GroupboxTemplateInstance or not GroupboxTemplateInstance:FindFirstChild("Button_TEMPLATE_Style1") then return end
 						Instances = {
 							Style1 = GroupboxTemplateInstance["Button_TEMPLATE_Style1"]:Clone(),
 							Style2 = GroupboxTemplateInstance["Button_TEMPLATE_Style2"]:Clone(),
@@ -5576,6 +5574,7 @@ function Starlight:CreateWindow(WindowSettings)
 					local Instances
 
 					task.spawn(function()
+						if not GroupboxTemplateInstance or not GroupboxTemplateInstance:FindFirstChild("Checkbox_TEMPLATE_Disabled") then return end
 						Instances = {
 							Style1 = GroupboxTemplateInstance["Checkbox_TEMPLATE_Disabled"]:Clone(),
 							Style2 = GroupboxTemplateInstance["Switch_TEMPLATE_Disabled"]:Clone(),
@@ -7312,8 +7311,10 @@ function Starlight:CreateWindow(WindowSettings)
 									connections[ParentIndex .. "_" .. Index]:Disconnect()
 								end
 								connections[ParentIndex .. "_" .. Index] = nil
-								Parent.Instance.Header.Size =
-									UDim2.fromOffset(Parent.Instance.Header.Size.X.Offset + 26, 20)
+								if Parent and Parent.Instance and Parent.Instance:FindFirstChild("Header") then
+									Parent.Instance.Header.Size =
+										UDim2.fromOffset(Parent.Instance.Header.Size.X.Offset + 26, 20)
+								end
 							end
 
 							function NestedElement:Set(NewNestedSettings, NewNestedIndex)
@@ -8915,6 +8916,7 @@ function Starlight:CreateWindow(WindowSettings)
 					}
 
 					task.spawn(function()
+						if not GroupboxTemplateInstance or not GroupboxTemplateInstance:FindFirstChild("Paragraph_TEMPLATE") then return end
 						Element.Instance = GroupboxTemplateInstance.Paragraph_TEMPLATE:Clone()
 						Element.Instance.Visible = true
 						Element.Instance.Parent = Groupbox.ParentingItem
