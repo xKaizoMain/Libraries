@@ -75,12 +75,64 @@ local Starlight = {
 
 	InterfaceBuild = "B5B9",
 
+	Toggles = {},
+	Options = {},
+	Dependencies = {},
+	
+	AddDependency = function(self, ElementObj, Type, TargetIndex, ExpectedValue)
+		table.insert(Starlight.Dependencies, {
+			Object = ElementObj,
+			Type = Type,
+			Target = TargetIndex,
+			Expected = ExpectedValue
+		})
+		return ElementObj
+	end,
+	
+	UpdateDependencies = function(self)
+		for _, dep in ipairs(Starlight.Dependencies) do
+			local targetValue = nil
+			if Starlight.Options[dep.Target] then
+				targetValue = Starlight.Options[dep.Target].Values.CurrentValue or Starlight.Options[dep.Target].Values.CurrentOption
+			end
+			if Starlight.Toggles[dep.Target] then
+				targetValue = Starlight.Toggles[dep.Target].Values.CurrentValue
+			end
+			
+			local shouldBeVisible = false
+			if type(dep.Expected) == "table" then
+				for _, v in pairs(dep.Expected) do
+					if targetValue == v then shouldBeVisible = true; break end
+				end
+			else
+				shouldBeVisible = (targetValue == dep.Expected)
+			end
+			
+			if dep.Type == "Element" then
+				if dep.Object.Instances and dep.Object.Instances[1] and typeof(dep.Object.Instances[1]) == "Instance" and dep.Object.Instances[1]:IsA("GuiObject") then
+					dep.Object.Instances[1].Visible = shouldBeVisible
+				end
+			elseif dep.Type == "DependencyBox" then
+				if dep.Object.Container then dep.Object.Container.Visible = shouldBeVisible end
+			elseif dep.Type == "DependencyGroupbox" then
+				if dep.Object.ParentingItem and dep.Object.ParentingItem.Parent and dep.Object.ParentingItem.Parent.Parent then
+					dep.Object.ParentingItem.Parent.Parent.Visible = shouldBeVisible
+				end
+			end
+		end
+	end,
+	
+	Flags = {},
 	WindowKeybind = "Y",
 
 	Minimized = false,
 	Maximized = false,
-	NotificationsOpen = false,
+	NotificationsOpen = true,
+	UseNotifications = true,
 	DialogOpen = false,
+
+	Options = {},
+	Toggles = {},
 
 	Window = nil,
 	Notifications = nil,
@@ -1042,14 +1094,42 @@ local ThemeMethods = {
 	bindTheme = function(object: GuiObject, property, themeKey)
 		local function set()
 			pcall(task.spawn, function()
-				if
-					object.ClassName == "UIGradient"
-					and typeof(GetNestedValue(Starlight.CurrentTheme, themeKey)) == "Color3"
-				then
+				if object.ClassName == "UIGradient" and typeof(GetNestedValue(Starlight.CurrentTheme, themeKey)) == "Color3" then
 					object[property] = ColorSequence.new({
 						ColorSequenceKeypoint.new(0, GetNestedValue(Starlight.CurrentTheme, themeKey)),
 						ColorSequenceKeypoint.new(1, GetNestedValue(Starlight.CurrentTheme, themeKey)),
 					})
+					return
+				end
+
+				-- Automatically inject UIGradients into Accents for premium aesthetics
+				if string.find(themeKey, "Accents") and object.ClassName ~= "UIGradient" then
+					local gradient = object:FindFirstChild("StarlightGradient")
+					if not gradient then
+						gradient = Instance.new("UIGradient")
+						gradient.Name = "StarlightGradient"
+						gradient.Parent = object
+					end
+					
+					-- Force the base object to pure white so the gradient shows pure colors
+					pcall(function()
+						if object:IsA("UIStroke") then
+							object.Color = Color3.new(1, 1, 1)
+						elseif object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+							object.TextColor3 = Color3.new(1, 1, 1)
+						elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then
+							object.ImageColor3 = Color3.new(1, 1, 1)
+						else
+							object.BackgroundColor3 = Color3.new(1, 1, 1)
+						end
+					end)
+					
+					local val = GetNestedValue(Starlight.CurrentTheme, themeKey)
+					if typeof(val) == "Color3" then
+						gradient.Color = ColorSequence.new(val)
+					else
+						gradient.Color = val
+					end
 					return
 				end
 
@@ -1814,7 +1894,7 @@ local function AddToolTip(InfoStr, HoverInstance)
 			end
 		end)
 
-		RunService.RenderStepped:Connect(function(dt)
+		table.insert(connections, RunService.RenderStepped:Connect(function(dt)
 			if not IsHovering then
 				return
 			end
@@ -1852,9 +1932,6 @@ end
 -- A Function to make an object movable via dragging another object
 -- Taken From Luna Interface Suite, A Nebula Softworks Product
 local function makeDraggable(Bar, Window: Frame, dragBar, enableTaptic, tapticOffset)
-	if IsMobile then
-		return
-	end
 	pcall(function()
 		local Dragging, DragInput, MousePos, FramePos
 
@@ -1864,7 +1941,7 @@ local function makeDraggable(Bar, Window: Frame, dragBar, enableTaptic, tapticOf
 		local function connectMethods()
 			if dragBar and enableTaptic then
 				dragBar.MouseEnter:Connect(function()
-					if not Dragging then
+					if not Dragging and not Starlight.CantDragForced then
 						Tween(
 							dragBarCosmetic,
 							{ BackgroundTransparency = 0.5, Size = UDim2.new(0, 120, 0, 4) },
@@ -1935,7 +2012,7 @@ local function makeDraggable(Bar, Window: Frame, dragBar, enableTaptic, tapticOf
 		end)
 
 		local debounce = false
-		UserInputService.InputChanged:Connect(function(Input)
+		table.insert(connections, UserInputService.InputChanged:Connect(function(Input)
 			if Input == DragInput and Dragging then
 				debounce = true
 				if Starlight.Maximized then
@@ -1978,18 +2055,20 @@ local function makeDraggable(Bar, Window: Frame, dragBar, enableTaptic, tapticOf
 					Window.Position.Y.Scale,
 					Window.Position.Y.Offset
 				)
-				local newDragBarPosition = UDim2.new(
-					Window.Position.X.Scale,
-					Window.Position.X.Offset + Window.Size.X.Offset / 2,
-					Window.Position.Y.Scale,
-					Window.Position.Y.Offset + Window.Size.Y.Offset + 10
-				)
-				Tween(
-					dragBar,
-					{ Position = newDragBarPosition },
-					nil,
-					TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
-				)
+				if dragBar then
+					local newDragBarPosition = UDim2.new(
+						Window.Position.X.Scale,
+						Window.Position.X.Offset + Window.Size.X.Offset / 2,
+						Window.Position.Y.Scale,
+						Window.Position.Y.Offset + Window.Size.Y.Offset + 10
+					)
+					Tween(
+						dragBar,
+						{ Position = newDragBarPosition },
+						nil,
+						TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+					)
+				end
 			end
 		end)
 	end)
@@ -2154,7 +2233,89 @@ local function getDeviceType(): string
 end
 
 local DeviceType = getDeviceType()
-local IsMobile = DeviceType == "Mobile"
+local IsMobile = (DeviceType == "Mobile" or DeviceType == "Tablet" or Camera.ViewportSize.X < 800)
+
+local function makeResizable(Window: Frame)
+	if IsMobile then return end
+	
+	local handles = {
+		BottomRight = { Pos = UDim2.new(1, -20, 1, -20), Anchor = Vector2.new(1, 1) },
+		BottomLeft = { Pos = UDim2.new(0, 0, 1, -20), Anchor = Vector2.new(0, 1) },
+		TopRight = { Pos = UDim2.new(1, -20, 0, 0), Anchor = Vector2.new(1, 0) },
+		TopLeft = { Pos = UDim2.new(0, 0, 0, 0), Anchor = Vector2.new(0, 0) }
+	}
+
+	for name, info in pairs(handles) do
+		local resizeHandle = Instance.new("Frame")
+		resizeHandle.Name = "ResizeHandle_" .. name
+		resizeHandle.Size = UDim2.new(0, 20, 0, 20)
+		resizeHandle.Position = info.Pos
+		resizeHandle.BackgroundTransparency = 1
+		resizeHandle.ZIndex = 100
+		resizeHandle.Parent = Window
+		resizeHandle.Active = true
+
+		local Dragging, MousePos, FrameSize, FramePos
+
+		resizeHandle.InputBegan:Connect(function(Input)
+			if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+				Dragging = true
+				MousePos = Input.Position
+				FrameSize = Window.AbsoluteSize
+				FramePos = Window.Position
+				Resizing = true
+
+				local endConnection
+				endConnection = Input.Changed:Connect(function()
+					if Input.UserInputState == Enum.UserInputState.End then
+						Dragging = false
+						Resizing = false
+						if endConnection then endConnection:Disconnect() end
+					end
+				end)
+			end
+		end)
+
+		local DragInput
+		resizeHandle.InputChanged:Connect(function(Input)
+			if Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch then
+				DragInput = Input
+			end
+		end)
+
+		UserInputService.InputChanged:Connect(function(Input)
+			if Input == DragInput and Dragging then
+				local Delta = Input.Position - MousePos
+				
+				local newSizeX = FrameSize.X
+				local newSizeY = FrameSize.Y
+				local newPosX = FramePos.X.Offset
+				local newPosY = FramePos.Y.Offset
+
+				-- X Axis
+				if info.Anchor.X == 1 then -- Right side
+					newSizeX = math.max(400, FrameSize.X + Delta.X)
+				else -- Left side
+					newSizeX = math.max(400, FrameSize.X - Delta.X)
+					newPosX = FramePos.X.Offset + (FrameSize.X - newSizeX)
+				end
+
+				-- Y Axis
+				if info.Anchor.Y == 1 then -- Bottom side
+					newSizeY = math.max(300, FrameSize.Y + Delta.Y)
+				else -- Top side
+					newSizeY = math.max(300, FrameSize.Y - Delta.Y)
+					newPosY = FramePos.Y.Offset + (FrameSize.Y - newSizeY)
+				end
+				
+				Tween(Window, { 
+					Size = UDim2.new(0, newSizeX, 0, newSizeY),
+					Position = UDim2.new(FramePos.X.Scale, newPosX, FramePos.Y.Scale, newPosY)
+				}, nil, TweenInfo.new(0.05, Enum.EasingStyle.Linear))
+			end
+		end)
+	end
+end
 
 --// ENDSUBSECTION
 
@@ -2217,6 +2378,7 @@ StarlightUI.Destroying:Connect(function()
 end)
 
 function Starlight:Notification(data)
+	if not Starlight.UseNotifications then return end
 	--[[
 	NotificationSettings = {
 		Title = string,
@@ -2467,11 +2629,9 @@ function Starlight:Notification(data)
 							-StarlightUI.Notifications:FindFirstChild("UIListLayout").Padding.Offset
 						),
 					}, function()
-						newNotification.Visible = false
+						newNotification:Destroy()
 					end, TweenInfo.new(1, Enum.EasingStyle.Exponential))
 				end
-
-				CollectionService:AddTag(newNotification, "__starlight_ExpiredNotification")
 			end)
 		end
 		return newNotification
@@ -2591,6 +2751,12 @@ function Starlight:CreateWindow(WindowSettings)
 
 	Starlight.FileSystem:BuildFolderTree(WindowSettings.FileSettings)
 
+	local BaseTransparency = WindowSettings.BackgroundTransparency or 0
+	mainWindow.BackgroundTransparency = BaseTransparency
+	mainWindow.Content.ContentMain.BackgroundTransparency = BaseTransparency
+	mainWindow.Content.Topbar.BackgroundTransparency = BaseTransparency
+	mainWindow.Sidebar.BackgroundTransparency = BaseTransparency
+
 	Starlight.Window = {
 		Instance = mainWindow,
 		TabSections = {},
@@ -2603,9 +2769,13 @@ function Starlight:CreateWindow(WindowSettings)
 
 	--// SUBSECTION : Initial Code
 	do
-		local AcrylicObject = Acrylic.AcrylicPaint()
-		local AcrylicObject2 = Acrylic.AcrylicPaint()
-		pcall(function()
+		local notificationAcrylicEvent = Instance.new("BindableEvent")
+		local acrylicEvent = Instance.new("BindableEvent")
+		local AcrylicObject
+		local AcrylicObject2
+		task.spawn(function()
+			AcrylicObject = Acrylic.create()
+			AcrylicObject2 = Acrylic.create()
 			AcrylicObject.AddParent(mainWindow)
 			AcrylicObject.Frame.Parent = mainWindow
 			AcrylicObject.Model.Size = Vector3.new(1.0, 1.032, 0.001)
@@ -2616,7 +2786,7 @@ function Starlight:CreateWindow(WindowSettings)
 
 		acrylicEvent.Event:Connect(function()
 			notificationAcrylicEvent:Fire()
-			if mainAcrylic then
+			if Starlight.Toggles["mainacrylic"].Values.CurrentValue == true then
 				Tween(mainWindow, { BackgroundTransparency = 0.6 })
 				Tween(mainWindow.Content.ContentMain, { BackgroundTransparency = 0.6 })
 				for _, cornerrepair in pairs(mainWindow.Content.ContentMain.CornerRepairs:GetChildren()) do
@@ -2634,21 +2804,21 @@ function Starlight:CreateWindow(WindowSettings)
 				Tween(StarlightUI.MobileToggle.Backdrop.UIStroke, { Transparency = 0.5 })
 				AcrylicObject.Frame.shadow.Visible = true
 			else
-				Tween(mainWindow, { BackgroundTransparency = 0 })
-				Tween(mainWindow.Content.ContentMain, { BackgroundTransparency = 0 })
+				Tween(mainWindow, { BackgroundTransparency = BaseTransparency })
+				Tween(mainWindow.Content.ContentMain, { BackgroundTransparency = BaseTransparency })
 				for _, cornerrepair in pairs(mainWindow.Content.ContentMain.CornerRepairs:GetChildren()) do
-					Tween(cornerrepair, { ImageTransparency = 0 })
+					Tween(cornerrepair, { ImageTransparency = BaseTransparency })
 				end
-				Tween(mainWindow.Content.Topbar, { BackgroundTransparency = 0 })
+				Tween(mainWindow.Content.Topbar, { BackgroundTransparency = BaseTransparency })
 				for _, cornerrepair in pairs(mainWindow.Content.Topbar.CornerRepairs:GetChildren()) do
-					Tween(cornerrepair, { ImageTransparency = 0 })
+					Tween(cornerrepair, { ImageTransparency = BaseTransparency })
 				end
-				Tween(mainWindow.Sidebar, { BackgroundTransparency = 0 })
+				Tween(mainWindow.Sidebar, { BackgroundTransparency = BaseTransparency })
 				for _, cornerrepair in pairs(mainWindow.Sidebar.CornerRepairs:GetChildren()) do
-					Tween(cornerrepair, { ImageTransparency = 0 })
+					Tween(cornerrepair, { ImageTransparency = BaseTransparency })
 				end
-				Tween(StarlightUI.MobileToggle.Backdrop, { BackgroundTransparency = 0 })
-				Tween(StarlightUI.MobileToggle.Backdrop.UIStroke, { Transparency = 0 })
+				Tween(StarlightUI.MobileToggle.Backdrop, { BackgroundTransparency = BaseTransparency })
+				Tween(StarlightUI.MobileToggle.Backdrop.UIStroke, { Transparency = BaseTransparency })
 				AcrylicObject.Frame.shadow.Visible = false
 			end
 		end)
@@ -2683,6 +2853,11 @@ function Starlight:CreateWindow(WindowSettings)
 
 		if mainWindow.Content.ContentMain.Elements:FindFirstChild("UIPageLayout") then
 			local pageLayout = mainWindow.Content.ContentMain.Elements.UIPageLayout
+			
+			-- Make moving between tabs smoother
+			pageLayout.TweenTime = 0.35
+			pageLayout.EasingStyle = Enum.EasingStyle.Quart
+			pageLayout.EasingDirection = Enum.EasingDirection.Out
 			-- Only set a property if it actually exists on the instance to avoid runtime errors
 			local hasOrientation = pcall(function()
 				local _ = pageLayout.Orientation
@@ -2717,12 +2892,27 @@ function Starlight:CreateWindow(WindowSettings)
 				col.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
 			end
 		end
+		local finalWinIcon = ""
+		local finalMobileIcon = "rbxassetid://6031097229"
+		if WindowSettings.Icon ~= nil then
+			if type(WindowSettings.Icon) == "string" then
+				if string.find(WindowSettings.Icon, "rbxassetid://") then
+					finalWinIcon = WindowSettings.Icon
+				elseif tonumber(WindowSettings.Icon) then
+					finalWinIcon = "rbxassetid://" .. WindowSettings.Icon
+				else
+					finalWinIcon = NebulaIcons:GetIcon(WindowSettings.Icon, "Lucide") or ("rbxassetid://" .. WindowSettings.Icon)
+				end
+			else
+				finalWinIcon = "rbxassetid://" .. tostring(WindowSettings.Icon)
+			end
+			finalMobileIcon = finalWinIcon
+		end
 
-		mainWindow.Sidebar.Icon.Image = WindowSettings.Icon ~= nil and "rbxassetid://" .. WindowSettings.Icon or ""
+		mainWindow.Sidebar.Icon.Image = finalWinIcon
 		mainWindow.Sidebar.Header.Text = WindowSettings.Name or ""
 		mainWindow.Content.Topbar.Headers.Subheader.Text = WindowSettings.Subtitle or ""
-		StarlightUI.MobileToggle.Image = WindowSettings.Icon ~= nil and "rbxassetid://" .. WindowSettings.Icon
-			or "rbxassetid://6031097229"
+		StarlightUI.MobileToggle.Image = finalMobileIcon
 
 		local size = mainWindow.Size
 		mainWindow.Size = WindowSettings.LoadingEnabled and UDim2.fromOffset(500, 325) or mainWindow.Size
@@ -3051,12 +3241,39 @@ function Starlight:CreateWindow(WindowSettings)
 
 		makeDraggable(mainWindow.Content.Topbar, mainWindow, StarlightUI.Drag)
 		makeDraggable(mainWindow.Sidebar, mainWindow, StarlightUI.Drag)
+		makeResizable(mainWindow)
 		makeDraggable(StarlightUI.MobileToggle, StarlightUI.MobileToggle, nil)
 		if StarlightUI.Drag then
 			makeDraggable(StarlightUI.Drag.Interact, mainWindow, StarlightUI.Drag, true, nil, StarlightUI.Drag)
 		end
 
 		--if not WindowSettings.LoadingEnabled then task.wait(.15) end
+		
+		if UserInputService.TouchEnabled then
+			local LockButton = StarlightUI.MobileToggle:Clone()
+			LockButton.Name = "MobileLock"
+			LockButton.Image = "rbxassetid://7733911828" -- Lock icon
+			LockButton.Position = UDim2.new(
+				StarlightUI.MobileToggle.Position.X.Scale, 
+				StarlightUI.MobileToggle.Position.X.Offset, 
+				StarlightUI.MobileToggle.Position.Y.Scale, 
+				StarlightUI.MobileToggle.Position.Y.Offset + 55
+			)
+			LockButton.Parent = StarlightUI.MobileToggle.Parent
+			
+			LockButton.MouseButton1Click:Connect(function()
+				Starlight.CantDragForced = not Starlight.CantDragForced
+				LockButton.Image = Starlight.CantDragForced and "rbxassetid://7734042071" or "rbxassetid://7733911828"
+			end)
+			
+			makeDraggable(LockButton, LockButton, nil)
+			
+			ThemeMethods.bindTheme(LockButton.Backdrop, "BackgroundColor3", "Backgrounds.Dark")
+			ThemeMethods.bindTheme(LockButton.Backdrop.UIStroke, "Color", "Foregrounds.Dark")
+			for _, shadow in pairs(LockButton.Backdrop.DropShadowHolder:GetChildren()) do
+				ThemeMethods.bindTheme(shadow, "ImageColor3", "Miscellaneous.Shadow")
+			end
+		end
 	end
 
 	--// ENDSUBSECTION
@@ -3331,12 +3548,104 @@ function Starlight:CreateWindow(WindowSettings)
 		--return Modal
 	end
 
+	--// SUBSECTION : Detachable Sidebar
+
+	Starlight.Window.SidebarDetached = false
+	local _sidebarDetachConnection = nil
+	local _sidebarReattachBtn = nil
+
+	function Starlight.Window:DetachSidebar()
+		if Starlight.Window.SidebarDetached then return end
+		Starlight.Window.SidebarDetached = true
+
+		local sidebar = mainWindow.Sidebar
+
+		-- Calculate sidebar's current absolute position relative to the screen
+		local absPos = sidebar.AbsolutePosition
+		local absSize = sidebar.AbsoluteSize
+
+		-- Reparent sidebar to the root ScreenGui as a floating independent frame
+		sidebar.Parent = StarlightUI
+		sidebar.Position = UDim2.fromOffset(absPos.X, absPos.Y - GuiService:GetGuiInset().Y)
+		sidebar.Size = UDim2.fromOffset(absSize.X, absSize.Y)
+
+		-- Expand main window to fill the now-empty sidebar column
+		local mwAbsWidth = mainWindow.AbsoluteSize.X
+		Tween(
+			mainWindow.Content,
+			{ Size = UDim2.new(1, 0, 1, 0) },
+			nil,
+			TweenInfo.new(0.3, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+		)
+
+		-- Give the floating sidebar its own drag + resize capability
+		makeDraggable(sidebar, sidebar, nil)
+		makeResizable(sidebar)
+
+		-- Add a small "Re-attach" button to the topbar so users can snap it back
+		local reattachBtn = Instance.new("TextButton")
+		reattachBtn.Name = "SidebarReattachBtn"
+		reattachBtn.Size = UDim2.fromOffset(26, 26)
+		reattachBtn.Position = UDim2.new(0, 8, 0.5, -13)
+		reattachBtn.AnchorPoint = Vector2.new(0, 0)
+		reattachBtn.Text = "⊞"
+		reattachBtn.Font = Enum.Font.GothamBold
+		reattachBtn.TextSize = 14
+		reattachBtn.BackgroundTransparency = 1
+		reattachBtn.ZIndex = 10
+		ThemeMethods.bindTheme(reattachBtn, "TextColor3", "Foregrounds.Medium")
+		reattachBtn.Parent = mainWindow.Content.Topbar
+
+		reattachBtn.MouseEnter:Connect(function()
+			Tween(reattachBtn, { TextTransparency = 0 })
+			ThemeMethods.bindTheme(reattachBtn, "TextColor3", "Foregrounds.Active")
+		end)
+		reattachBtn.MouseLeave:Connect(function()
+			ThemeMethods.bindTheme(reattachBtn, "TextColor3", "Foregrounds.Medium")
+		end)
+		reattachBtn.MouseButton1Click:Connect(function()
+			Starlight.Window:ReattachSidebar()
+		end)
+
+		_sidebarReattachBtn = reattachBtn
+	end
+
+	function Starlight.Window:ReattachSidebar()
+		if not Starlight.Window.SidebarDetached then return end
+		Starlight.Window.SidebarDetached = false
+
+		local sidebar = mainWindow.Sidebar
+
+		-- Move sidebar back into the main window frame
+		sidebar.Parent = mainWindow
+		sidebar.Position = UDim2.new(0, 0, 0, 0)
+		sidebar.Size = UDim2.fromOffset(160, sidebar.AbsoluteSize.Y == 0 and mainWindow.AbsoluteSize.Y or sidebar.AbsoluteSize.Y)
+		sidebar.Size = UDim2.new(0, 160, 1, 0)
+
+		-- Restore the main window content to share space with sidebar
+		Tween(
+			mainWindow.Content,
+			{ Size = UDim2.new(1, -160, 1, 0) },
+			nil,
+			TweenInfo.new(0.3, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+		)
+
+		-- Remove the re-attach button from the topbar
+		if _sidebarReattachBtn then
+			_sidebarReattachBtn:Destroy()
+			_sidebarReattachBtn = nil
+		end
+	end
+
+	--// ENDSUBSECTION
+
 	local prebuiltTabSection = nil
 
 	local homeTabCalled: boolean? = false
 	function Starlight.Window:CreateHomeTab(TabSettings)
 		TabSettings.UnsupportedExecutors = TabSettings.UnsupportedExecutors or {}
 		TabSettings.SupportedExecutors = TabSettings.SupportedExecutors or {}
+		TabSettings.RequiredFunctions = TabSettings.RequiredFunctions or {}
 		TabSettings.DiscordInvite = TabSettings.DiscordInvite or ""
 		TabSettings.Changelog = TabSettings.Changelog or {}
 		TabSettings.IconStyle = TabSettings.IconStyle or 1
@@ -3490,107 +3799,177 @@ function Starlight:CreateWindow(WindowSettings)
 			end)
 		end)
 
-		task.spawn(function()
-			pcall(function()
-				local targetFrame = nil
-				for _, col in pairs(Tab.Instances.Page.Holder:GetChildren()) do
-					if col:IsA("Frame") then
-						for _, child in pairs(col:GetChildren()) do
-							if child:IsA("Frame") then
-								local isComingSoon = (child.Name == "ComingSoon" or child.Name == "Coming Soon")
-								if not isComingSoon and child:FindFirstChild("Header") then
-									local text = child.Header.Text:lower()
-									if text:find("coming") or text:find("soon") then
-										isComingSoon = true
+		local targetFrame = nil
+		for _, col in pairs(Tab.Instances.Page.Holder:GetChildren()) do
+			if col:IsA("Frame") then
+				for _, child in pairs(col:GetChildren()) do
+					if child:IsA("Frame") then
+								local function hasTargetText(inst)
+									if (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
+										local txt = inst.Text:lower()
+										if txt:find("account") or txt:find("coming soon") then
+											return true
+										end
 									end
+									for _, c in pairs(inst:GetChildren()) do
+										if hasTargetText(c) then return true end
+									end
+									return false
 								end
-								if isComingSoon then
+								
+								if hasTargetText(child) then
 									targetFrame = child
 									break
 								end
 							end
 						end
 					end
-					if targetFrame then
-						break
-					end
+					if targetFrame then break end
 				end
 
 				if targetFrame then
-					for _, item in pairs(targetFrame:GetChildren()) do
-						if
-							item.Name ~= "Header"
-							and item.Name ~= "Subheader"
-							and item.Name ~= "UIListLayout"
-							and item.Name ~= "UIPadding"
-						then
-							item.Visible = false
+					local friendsTemplate = nil
+					for _, col in pairs(Tab.Instances.Page.Holder:GetChildren()) do
+						if col:IsA("Frame") then
+							friendsTemplate = col:FindFirstChild("Friends")
+							if friendsTemplate then break end
 						end
 					end
-
-					targetFrame.Header.Text = "Menu Keybind"
-					if targetFrame:FindFirstChild("Subheader") then
-						targetFrame.Subheader.Text = "Click the box below to change bind"
-						targetFrame.Subheader.Visible = true
-					end
-
-					local container = Instance.new("Frame")
-					container.Name = "KeybindContainer"
-					container.Size = UDim2.new(0.9, 0, 0, 35)
-					container.Position = UDim2.new(0.05, 0, 0.55, 0)
-					container.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-					container.BorderSizePixel = 0
-					container.Parent = targetFrame
-
-					local corner = Instance.new("UICorner")
-					corner.CornerRadius = UDim.new(0, 6)
-					corner.Parent = container
-
-					local stroke = Instance.new("UIStroke")
-					stroke.Color = Color3.fromRGB(60, 60, 70)
-					stroke.Thickness = 1
-					stroke.Parent = container
-
-					local btn = Instance.new("TextButton")
-					btn.Size = UDim2.new(1, 0, 1, 0)
-					btn.BackgroundTransparency = 1
-					btn.Text = tostring(Starlight.WindowKeybind or "Y")
-					btn.TextColor3 = Color3.fromRGB(240, 240, 240)
-					btn.TextSize = 14
-					btn.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.Bold)
-					btn.Parent = container
-
-					ThemeMethods.bindTheme(container, "BackgroundColor3", "Backgrounds.Dark")
-					ThemeMethods.bindTheme(stroke, "Color", "Foregrounds.Dark")
-					ThemeMethods.bindTheme(btn, "TextColor3", "Foregrounds.Light")
-
-					local isListening = false
-					btn.MouseButton1Click:Connect(function()
-						if isListening then
-							return
-						end
-						isListening = true
-						btn.Text = "..."
-						if targetFrame:FindFirstChild("Subheader") then
-							targetFrame.Subheader.Text = "Press any key..."
-						end
-					end)
-
-					UserInputService.InputBegan:Connect(function(input, gpe)
-						if isListening and input.UserInputType == Enum.UserInputType.Keyboard then
-							if input.KeyCode ~= Enum.KeyCode.Unknown then
-								Starlight.WindowKeybind = input.KeyCode.Name
-								isListening = false
-								btn.Text = tostring(Starlight.WindowKeybind)
-								if targetFrame:FindFirstChild("Subheader") then
-									targetFrame.Subheader.Text = "Click the box below to change bind"
-								end
+					
+					-- Do not destroy targetFrame! Keep it.
+					targetFrame.Name = "Luarmor"
+					local backdrop = targetFrame:FindFirstChild("PART_Backdrop") or targetFrame
+					
+					-- Hide old labels and images that are not structural (this reliably hides "Coming Soon" and player icons)
+					for _, c in pairs(backdrop:GetChildren()) do
+						if c:IsA("TextLabel") or c:IsA("ImageLabel") or (c:IsA("Frame") and c.Name ~= "PART_Content" and c.Name ~= "Content" and c.Name ~= "StatsFrame" and c.Name ~= "Frame") then
+							if c.Name ~= "Header" and c.Name ~= "Interact" and c.Name ~= "Hover" and c.Name ~= "DropShadow" then
+								c.Visible = false
 							end
 						end
-					end)
+					end
+					
+					
+					local backdrop = targetFrame:FindFirstChild("PART_Backdrop") or targetFrame
+					
+					-- Find the header in targetFrame/backdrop directly!
+					local header = backdrop:FindFirstChild("Header") or targetFrame:FindFirstChild("Header")
+					if header then
+						if header:IsA("TextLabel") then
+							header.Text = "Luarmor"
+						elseif header:FindFirstChild("Header") and header.Header:IsA("TextLabel") then
+							header.Header.Text = "Luarmor"
+						end
+						if header:FindFirstChild("Icon") then
+							header.Icon.Visible = true
+							local lIcon = Starlight.LuarmorIcon
+							if lIcon and type(lIcon) == "string" then
+								if string.find(lIcon, "rbxassetid://") then
+									header.Icon.Image = lIcon
+								else
+									header.Icon.Image = NebulaIcons:GetIcon(lIcon, "Lucide") or "rbxassetid://11295288868"
+								end
+							else
+								header.Icon.Image = "rbxassetid://11295288868" -- Script/Document icon for "Luarmor"
+							end
+						end
+					end
+					
+					-- Since we kept Account, we need to clone the Friends inner box into it!
+					local statsFrame = targetFrame:FindFirstChild("StatsFrame") or targetFrame:FindFirstChild("Frame")
+					local defaultMsg = nil
+					local gridLayout = nil
+					
+					if not statsFrame and friendsTemplate then
+						local templateInner = friendsTemplate:FindFirstChild("Frame")
+						if templateInner then
+							statsFrame = templateInner:Clone()
+							statsFrame.Name = "StatsFrame"
+							statsFrame.Parent = targetFrame:FindFirstChild("PART_Content") or backdrop
+							
+							-- If it's parented to backdrop (which has no layout natively), position it manually
+							if statsFrame.Parent == backdrop then
+								statsFrame.Position = UDim2.new(0, 12, 0, 36)
+								statsFrame.Size = UDim2.new(1, -24, 1, -48)
+							end
+						end
+					end
+					
+					if statsFrame then
+						gridLayout = statsFrame:FindFirstChildWhichIsA("UIGridLayout")
+						
+						defaultMsg = statsFrame:FindFirstChild("DefaultMsg")
+						if not defaultMsg then
+							defaultMsg = Instance.new("TextLabel")
+							defaultMsg.Name = "DefaultMsg"
+							defaultMsg.Size = UDim2.new(1, 0, 1, 0)
+							defaultMsg.BackgroundTransparency = 1
+							defaultMsg.Text = "Uh oh, we expected Luarmor. No worries! I bet your script is still really good 🔥"
+							defaultMsg.TextColor3 = Color3.fromRGB(240, 240, 240)
+							defaultMsg.TextSize = 13
+							defaultMsg.TextWrapped = true
+							defaultMsg.TextXAlignment = Enum.TextXAlignment.Left
+							defaultMsg.TextYAlignment = Enum.TextYAlignment.Top
+							defaultMsg.Font = Enum.Font.GothamMedium
+							defaultMsg.Parent = statsFrame
+							defaultMsg.ZIndex = 50
+							ThemeMethods.bindTheme(defaultMsg, "TextColor3", "Foregrounds.Medium")
+						end
+					end
+					
+					Starlight.LuarmorLabels = {
+						DefaultMsg = defaultMsg,
+						StatsFrame = statsFrame,
+						GridLayout = gridLayout,
+						TimeRemaining = statsFrame and statsFrame:FindFirstChild("total"),
+						TotalExecutions = statsFrame and statsFrame:FindFirstChild("offline"),
+						ProjectName = statsFrame and statsFrame:FindFirstChild("online"),
+						Type = statsFrame and statsFrame:FindFirstChild("inserver")
+					}
+					
+					-- Hide stats and disable layout by default, show defaultMsg
+					if gridLayout then gridLayout.Parent = nil end
+					if statsFrame then
+						for _, child in pairs(statsFrame:GetChildren()) do
+							if child:IsA("TextLabel") and child.Name ~= "DefaultMsg" then
+								child.Visible = false
+							end
+						end
+						defaultMsg.Visible = true
+					end
 				end
-			end)
-		end)
+
+		function Starlight:UpdateLuarmor(TimeRemaining, TotalExecutions, ProjectName, Type)
+			if Starlight.LuarmorLabels then
+				if Starlight.LuarmorLabels.DefaultMsg then
+					Starlight.LuarmorLabels.DefaultMsg.Visible = false
+				end
+				if Starlight.LuarmorLabels.GridLayout then
+					Starlight.LuarmorLabels.GridLayout.Parent = Starlight.LuarmorLabels.StatsFrame
+				end
+				
+				local function formatStat(title, value)
+					return '<font size="14" color="#FFF" weight="semibold">' .. title .. '</font>\n' .. tostring(value)
+				end
+				
+				if Starlight.LuarmorLabels.TimeRemaining then
+					Starlight.LuarmorLabels.TimeRemaining.Visible = true
+					Starlight.LuarmorLabels.TimeRemaining.Text = formatStat("Time Left", TimeRemaining)
+				end
+				if Starlight.LuarmorLabels.TotalExecutions then
+					Starlight.LuarmorLabels.TotalExecutions.Visible = true
+					Starlight.LuarmorLabels.TotalExecutions.Text = formatStat("Executions", TotalExecutions)
+				end
+				if Starlight.LuarmorLabels.ProjectName then
+					Starlight.LuarmorLabels.ProjectName.Visible = true
+					Starlight.LuarmorLabels.ProjectName.Text = formatStat("Project", ProjectName)
+				end
+				if Starlight.LuarmorLabels.Type then
+					Starlight.LuarmorLabels.Type.Visible = true
+					Starlight.LuarmorLabels.Type.Text = formatStat("License Type", Type)
+				end
+			end
+		end
 
 		for _, column in pairs(Tab.Instances.Page.Holder:GetChildren()) do
 			if column.ClassName ~= "Frame" then
@@ -3635,11 +4014,32 @@ function Starlight:CreateWindow(WindowSettings)
 		table.insert(TabSettings.UnsupportedExecutors, "Roblox Studio")
 
 		Tab.Instances.Page.Holder.Center.Executor.Header.Text = executorname
-		if table.find(TabSettings.SupportedExecutors, executorname) then
-			Tab.Instances.Page.Holder.Center.Executor.Subheader.Text = "Your Executor Is Supported By \nThis Script."
+		
+		local hasRequiredFunctions = true
+		for _, funcName in pairs(TabSettings.RequiredFunctions) do
+			local envFunc = nil
+			pcall(function()
+				if type(getgenv) == "function" then
+					envFunc = getgenv()[funcName]
+				else
+					envFunc = getfenv()[funcName]
+				end
+			end)
+			if not envFunc then
+				hasRequiredFunctions = false
+				break
+			end
 		end
-		if table.find(TabSettings.UnsupportedExecutors, executorname) then
+
+		if not hasRequiredFunctions then
+			Tab.Instances.Page.Holder.Center.Executor.Subheader.Text = "Your Executor Is Unsupported \nMissing Required Functions."
+		elseif table.find(TabSettings.SupportedExecutors, executorname) then
+			Tab.Instances.Page.Holder.Center.Executor.Subheader.Text = "Your Executor Is Supported By \nThis Script."
+		elseif table.find(TabSettings.UnsupportedExecutors, executorname) then
 			Tab.Instances.Page.Holder.Center.Executor.Subheader.Text = "Your Executor Is Unsupported \nBy This Script."
+		else
+			-- If not explicitly listed, but has required functions, consider it supported by default or leave it.
+			Tab.Instances.Page.Holder.Center.Executor.Subheader.Text = "Your Executor Is Supported By \nThis Script."
 		end
 
 		Tab.Instances.Page.Holder.Left.Server.Subheader.Text = "Currently Playing "
@@ -3647,10 +4047,17 @@ function Starlight:CreateWindow(WindowSettings)
 		Tab.Instances.Page.Holder.Left.Server.Frame.serverregion.Text = '<font size="14" color="#FFF" weight="semibold">Region</font>\n'
 			.. Localization:GetCountryRegionForPlayerAsync(Player)
 
-		Tab.Instances.Page.Holder.Left.Server.Frame.copyjoin.MouseButton1Click:Connect(function()
-			setclipboard(
-				`game:GetService("TeleportService"):TeleportToPlaceInstance({game.PlaceId}, "{game.JobId}", game:GetService("Players").LocalPlayer)`
-			)
+		local copyjoin = Tab.Instances.Page.Holder.Left.Server.Frame.copyjoin
+		copyjoin.Text = '<font size="14" color="#FFF" weight="semibold">Rejoin Server</font>\nTap to rejoin the current script'
+		
+		if copyjoin:FindFirstChild("Title") then
+			copyjoin.Title.Text = "Rejoin Server"
+		end
+		if copyjoin:FindFirstChild("Description") then
+			copyjoin.Description.Text = "Tap to rejoin the current script"
+		end
+		copyjoin.MouseButton1Click:Connect(function()
+			game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, game:GetService("Players").LocalPlayer)
 		end)
 
 		local function updatePlayerCount()
@@ -3824,6 +4231,7 @@ function Starlight:CreateWindow(WindowSettings)
 		end
 
 		function Tab:Destroy()
+			if not Tab then return end
 			Tab.Instances.Page:Destroy()
 			Tab.Instances.Button:Destroy()
 			connections.__homeTabTime:Disconnect()
@@ -3866,6 +4274,7 @@ function Starlight:CreateWindow(WindowSettings)
 		end
 
 		function TabSection:Destroy()
+			if not TabSection then return end
 			TabSection.Instance:Destroy()
 			for _, tab in pairs(TabSection.Tabs) do
 				tab:Destroy()
@@ -4021,6 +4430,7 @@ function Starlight:CreateWindow(WindowSettings)
 			end
 
 			function Tab:Destroy()
+				if not Tab then return end
 				Tab.Instances.Button:Destroy()
 				Tab.Instances.Page:Destroy()
 				for _, groupbox in pairs(Tab.Groupboxes) do
@@ -4050,7 +4460,7 @@ function Starlight:CreateWindow(WindowSettings)
 
 			TabSettings.Icon = TabSettings.Icon or ""
 			TabSettings.Columns = TabSettings.Columns or 2
-			if IsMobile then
+			if IsMobile and WindowSettings.MobileLayout == "Single" then
 				TabSettings.Columns = 1
 			end
 			local Tab = {
@@ -4169,7 +4579,9 @@ function Starlight:CreateWindow(WindowSettings)
 				column.ClipsDescendants = true
 				column.ScrollingDirection = Enum.ScrollingDirection.Y
 				column.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+				column.ElasticBehavior = Enum.ElasticBehavior.Always
 				column.CanvasSize = UDim2.new(0, 0, 0, 0)
+				column.Size = UDim2.new(1 / TabSettings.Columns, -10, 1, 0)
 				for i, v in column:GetChildren() do
 					if v.ClassName == "Frame" then
 						v:Destroy()
@@ -4234,6 +4646,8 @@ function Starlight:CreateWindow(WindowSettings)
 				fadebottom.Parent = mainWindow.Content.ContentMain.FadesBottom
 			end
 
+			-- (MultiSection Mobile Layout Logic removed to restore SideBySide as default)
+
 			ThemeMethods.bindTheme(Tab.Instances.Button, "BackgroundColor3", "Backgrounds.Dark")
 			ThemeMethods.bindTheme(Tab.Instances.Button.Accent, "Color", "Accents.Main")
 			ThemeMethods.bindTheme(Tab.Instances.Button.Icon.AccentBrighter, "Color", "Accents.Brighter")
@@ -4259,6 +4673,7 @@ function Starlight:CreateWindow(WindowSettings)
 			end
 
 			function Tab:Destroy()
+				if not Tab then return end
 				Tab.Instances.Button:Destroy()
 				Tab.Instances.Page:Destroy()
 				for _, groupbox in pairs(Tab.Groupboxes) do
@@ -4294,6 +4709,9 @@ function Starlight:CreateWindow(WindowSettings)
 				GroupboxSettings.Icon = GroupboxSettings.Icon or ""
 				GroupboxSettings.Column = GroupboxSettings.Column or 1
 				GroupboxSettings.Style = GroupboxSettings.Style or 1
+				if IsMobile and (WindowSettings.MobileLayout == "Single" or not WindowSettings.MobileLayout) then
+					GroupboxSettings.Column = 1
+				end
 
 				local Groupbox = {
 					Values = GroupboxSettings,
@@ -4418,6 +4836,7 @@ function Starlight:CreateWindow(WindowSettings)
 				end
 
 				function Groupbox:Destroy()
+					if not Groupbox then return end
 					Groupbox.Instance:Destroy()
 					for _, element in pairs(Groupbox.Elements) do
 						element:Destroy()
@@ -4488,6 +4907,7 @@ function Starlight:CreateWindow(WindowSettings)
 					end
 
 					function Element:Destroy()
+						if not Element then return end
 						Element.Instance:Destroy()
 					end
 
@@ -4580,6 +5000,7 @@ function Starlight:CreateWindow(WindowSettings)
 					end
 
 					function Element:Destroy()
+						if not Element then return end
 						Element.Instance:Destroy()
 					end
 
@@ -4723,6 +5144,7 @@ function Starlight:CreateWindow(WindowSettings)
 					end
 
 					function Element:Destroy()
+						if not Element then return end
 						Element.Instance:Destroy()
 					end
 
@@ -4846,6 +5268,7 @@ function Starlight:CreateWindow(WindowSettings)
 					end
 
 					function Element:Destroy()
+						if not Element then return end
 						Element.Instance:Destroy()
 					end
 
@@ -4896,18 +5319,22 @@ function Starlight:CreateWindow(WindowSettings)
 
 
 					--// Interaction System \\--
+					local popupConnection = nil
 					Element.Instances.Element.Icon.MouseButton1Click:Connect(function()
 						mainWindow["Popup Overlay"].Visible = true
 						Element.Instances.Popup.Visible = true
 
-						UserInputService.InputBegan:Connect(function(i, g)
+						if popupConnection then popupConnection:Disconnect() end
+						popupConnection = UserInputService.InputBegan:Connect(function(i, g)
 							if g or i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 							local p, pos, size = i.Position, Element.Instances.Popup.AbsolutePosition, Element.Instances.Popup.AbsoluteSize
 							if not (p.X >= pos.X and p.X <= pos.X + size.X and p.Y >= pos.Y and p.Y <= pos.Y + size.Y) then
 								mainWindow["Popup Overlay"].Visible = false
 								Element.Instances.Popup.Visible = false
+								if popupConnection then popupConnection:Disconnect(); popupConnection = nil end
 							end
 						end)
+						table.insert(connections, popupConnection)
 					end)
 
 					local function ActivateColorSingle(name)
@@ -5049,12 +5476,35 @@ function Starlight:CreateWindow(WindowSettings)
 						end
 					end
 
+					function Element:SetValue(Value)
+						ElementSettings.CurrentOption = Value
+						Element.Values.CurrentOption = Value
+						
+						local Selected, ind = nil, 0
+						if type(Value) == "table" then
+							for i, v in pairs(Value) do
+								ind = ind + 1
+							end
+							if ind == 1 then Selected = Value[1] else Selected = Value end
+						else
+							Selected = Value
+						end
+						
+						CB(Selected)
+						-- Note: Full UI update logic for dropdowns isn't fully separated here, but updating CurrentOption and firing Callback covers the registry integration perfectly for SaveManager.
+					end
+
 					function Element:Destroy()
+						if not Element then return end
+						Starlight.Options[ElementSettings.Name] = nil
 						Element.Instance:Destroy()
 					end
 
 					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ElementSettings.Name] = Element
-					return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ElementSettings.Name]
+					Starlight.Options[ElementSettings.Name] = Element
+					local _el = Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ElementSettings.Name]
+					function _el:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return _el
 				end
 
 				function Groupbox:CreateBind(ElementSettings) -- will be merged with toggles and labels soon
@@ -5115,7 +5565,7 @@ function Starlight:CreateWindow(WindowSettings)
 						end
 					end)
 
-					UserInputService.InputBegan:Connect(function(input, processed)
+					table.insert(connections, UserInputService.InputBegan:Connect(function(input, processed)
 
 						if CheckingForKey then
 
@@ -5272,12 +5722,24 @@ function Starlight:CreateWindow(WindowSettings)
 						Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ElementSettings.Name].Values = ElementSettings
 					end
 
+					function Element:SetValue(Value)
+						Element:Set({ CurrentValue = Value })
+						if Element.Values.Callback then
+							pcall(Element.Values.Callback, Value)
+						end
+					end
+
 					function Element:Destroy()
+						if not Element then return end
+						Starlight.Options[ElementSettings.Name] = nil
 						Element.Instance:Destroy()
 					end
 
 					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ElementSettings.Name] = Element
-					return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ElementSettings.Name]
+					Starlight.Options[ElementSettings.Name] = Element
+					local _el = Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ElementSettings.Name]
+					function _el:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return _el
 				end
 				
 
@@ -5359,7 +5821,7 @@ function Starlight:CreateWindow(WindowSettings)
 									hover = true
 								end)
 
-								UserInputService.InputEnded:Connect(function(input, processed)
+								table.insert(connections, UserInputService.InputEnded:Connect(function(input, processed)
 									if not hover then
 										return
 									end
@@ -5514,6 +5976,7 @@ function Starlight:CreateWindow(WindowSettings)
 						end
 
 						function Element:Destroy()
+							if not Element then return end
 							for _, ElementInstance in pairs(Instances) do
 								ElementInstance:Destroy()
 							end
@@ -5940,9 +6403,17 @@ function Starlight:CreateWindow(WindowSettings)
 							Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index].Values =
 								Element.Values
 						end
+						function Element:SetValue(Value)
+							if type(Value) == "table" and Value.value ~= nil then
+								Value = Value.value
+							end
+							Element:Set({ CurrentValue = Value }, Index)
+						end
 					end)
 
 					function Element:Destroy()
+						if not Element then return end
+						Starlight.Toggles[Index] = nil
 						for _, ElementInstance in pairs(Instances) do
 							ElementInstance:Destroy()
 						end
@@ -6028,7 +6499,10 @@ function Starlight:CreateWindow(WindowSettings)
 					end
 
 					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index] = Element
-					return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index]
+					if Index then Starlight.Toggles[Index] = Element end
+					local _el = Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index]
+					function _el:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return _el
 				end
 
 				function Groupbox:CreateDivider()
@@ -6436,6 +6910,7 @@ function Starlight:CreateWindow(WindowSettings)
 						)
 
 						function Element:Destroy()
+							if not Element then return end
 							Element.Instance:Destroy()
 							if Element.NestedElements ~= nil then
 								for _, nestedElement in pairs(Element.NestedElements) do
@@ -6492,11 +6967,27 @@ function Starlight:CreateWindow(WindowSettings)
 							Element.Instance.Interactable = true
 							Element.Instance.Lock_Overlay.Header.Text = ""
 						end
+						function Element:SetValue(Value)
+							if type(Value) == "table" and Value.value ~= nil then
+								Value = Value.value
+							end
+							Element:Set({ CurrentValue = Value }, Index)
+						end
+
+						function Element:Destroy()
+							if not Element then return end
+							Starlight.Options[Index] = nil
+							Element.Instance:Destroy()
+							Element = nil
+						end
 						Element.Instance.Parent = Groupbox.ParentingItem
 					end)
 
 					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index] = Element
-					return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index]
+					if Index then Starlight.Options[Index] = Element end
+					local _el = Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index]
+					function _el:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return _el
 				end
 
 				function Groupbox:CreateInput(ElementSettings, Index)
@@ -6751,7 +7242,16 @@ function Starlight:CreateWindow(WindowSettings)
 								Element.Values
 						end
 
+						function Element:SetValue(Value)
+							if type(Value) == "table" and Value.value ~= nil then
+								Value = Value.value
+							end
+							Element:Set({ CurrentValue = Value }, Index)
+						end
+
 						function Element:Destroy()
+							if not Element then return end
+							Starlight.Options[Index] = nil
 							Element.Instance:Destroy()
 							if Element.NestedElements ~= nil then
 								for _, nestedElement in pairs(Element.NestedElements) do
@@ -6776,7 +7276,45 @@ function Starlight:CreateWindow(WindowSettings)
 					Element.Instance.Parent = Groupbox.ParentingItem
 
 					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index] = Element
-					return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index]
+					if Index then Starlight.Options[Index] = Element end
+					local _el = Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index]
+					function _el:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return _el
+				end
+
+				function Groupbox:AddDependencyBox()
+					local depBox = {}
+					depBox.Container = Instance.new("Frame")
+					depBox.Container.Name = "DependencyBox"
+					depBox.Container.BackgroundTransparency = 1
+					depBox.Container.Size = UDim2.new(1, 0, 0, 0)
+					depBox.Container.AutomaticSize = Enum.AutomaticSize.Y
+					depBox.Container.Visible = false
+					depBox.Container.Parent = Groupbox.ParentingItem
+
+					local listLayout = Instance.new("UIListLayout")
+					listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+					listLayout.Padding = UDim.new(0, 4)
+					listLayout.Parent = depBox.Container
+
+					function depBox:AddDependency(Target, Expected)
+						Starlight:AddDependency(self, "DependencyBox", Target, Expected)
+						return self
+					end
+					
+					for k, v in pairs(Groupbox) do
+						if type(v) == "function" and string.match(k, "^Create") then
+							depBox[k] = function(self_dep, ...)
+								local origParentingItem = Groupbox.ParentingItem
+								Groupbox.ParentingItem = depBox.Container
+								local result = v(Groupbox, ...)
+								Groupbox.ParentingItem = origParentingItem
+								return result
+							end
+						end
+					end
+					
+					return depBox
 				end
 
 				function Groupbox:CreateLabel(ElementSettings, Index)
@@ -6850,6 +7388,7 @@ function Starlight:CreateWindow(WindowSettings)
 						end
 
 						function Element:Destroy()
+							if not Element then return end
 							Element.Instance:Destroy()
 							if Element.NestedElements ~= nil then
 								for _, nestedElement in pairs(Element.NestedElements) do
@@ -7305,6 +7844,7 @@ function Starlight:CreateWindow(WindowSettings)
 							ThemeMethods.bindTheme(NestedElement.Instance, "PlaceholderColor3", "Foregrounds.Medium")
 
 							function NestedElement:Destroy()
+								if not NestedElement then return end
 								NestedElement.Instance:Destroy()
 								NestedElement = nil
 								if connections[ParentIndex .. "_" .. Index] ~= nil then
@@ -7367,14 +7907,21 @@ function Starlight:CreateWindow(WindowSettings)
 									Parent.Instance.Header.Text = ElementSettings.Name
 								end
 
-								Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex].Values =
-									NestedElement.Values
+							function NestedElement:SetValue(Value)
+								NestedElement:Set({ CurrentValue = Value }, NestedIndex)
 							end
-						end)
 
-						Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex] =
-							NestedElement
-						return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex]
+							Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex].Values =
+								NestedElement.Values
+						end
+					end)
+
+					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex] =
+						NestedElement
+					if NestedIndex then Starlight.Options[NestedIndex] = NestedElement end
+					local _el = Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex]
+					function _el:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return _el
 					end
 
 					function Element:AddColorPicker(NestedSettings, NestedIndex, Parent, ParentIndex)
@@ -7819,7 +8366,7 @@ function Starlight:CreateWindow(WindowSettings)
 								local hex =
 									string.format("#%02X%02X%02X", color.R * 0xFF, color.G * 0xFF, color.B * 0xFF)
 
-								UserInputService.InputEnded:Connect(function(input)
+								table.insert(connections, UserInputService.InputEnded:Connect(function(input)
 									if
 										input.UserInputType == Enum.UserInputType.MouseButton1
 										or input.UserInputType == Enum.UserInputType.Touch
@@ -7938,7 +8485,7 @@ function Starlight:CreateWindow(WindowSettings)
 									end
 								)
 
-								RunService.RenderStepped:Connect(function()
+								table.insert(connections, RunService.RenderStepped:Connect(function()
 									if mainDragging then
 										local localX = math.clamp(
 											Mouse.X
@@ -8007,7 +8554,7 @@ function Starlight:CreateWindow(WindowSettings)
 										NestedElement.Values.Transparency = 1 - t
 										updateInstances()
 									end
-								end)
+								end))
 							end
 
 							NestedElement.Instances[2].Container.Color.OldColor.MouseButton1Click:Connect(function()
@@ -8276,6 +8823,7 @@ function Starlight:CreateWindow(WindowSettings)
 							end
 
 							function NestedElement:Destroy()
+								if not NestedElement then return end
 								NestedElement.Instances[1]:Destroy()
 								NestedElement.Instances[2]:Destroy()
 								NestedElement = nil
@@ -8304,14 +8852,21 @@ function Starlight:CreateWindow(WindowSettings)
 								updateInstances(nil, ignoreCallback)
 								NestedElement:__updateHsv()
 
-								Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex].Values =
-									NestedElement.Values
+							function NestedElement:SetValue(Color, Transparency)
+								NestedElement:Set({ CurrentValue = Color, Transparency = Transparency }, NestedIndex)
 							end
-						end)
 
-						Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex] =
-							NestedElement
-						return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex]
+							Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex].Values =
+								NestedElement.Values
+						end
+					end)
+
+					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex] =
+						NestedElement
+					if NestedIndex then Starlight.Options[NestedIndex] = NestedElement end
+					local _el = Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex]
+					function _el:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return _el
 					end
 
 					function Element:AddDropdown(NestedSettings, NestedIndex, Parent, ParentIndex)
@@ -8820,6 +9375,7 @@ function Starlight:CreateWindow(WindowSettings)
 							)
 
 							function NestedElement:Destroy()
+								if not NestedElement then return end
 								NestedElement.Instances[1]:Destroy()
 								NestedElement.Instances[2]:Destroy()
 								Parent.Instance.Size = UDim2.fromOffset(0, Parent.Instance.Size.Y.Offset - additionSize)
@@ -8885,14 +9441,35 @@ function Starlight:CreateWindow(WindowSettings)
 										or "--"
 								end)
 
-								Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex].Values =
-									NestedElement.Values
+							function NestedElement:SetValue(Value)
+								NestedSettings.CurrentOption = Value
+								NestedElement.Values.CurrentOption = Value
+								
+								local Selected, ind = nil, 0
+								if type(Value) == "table" then
+									for i, v in pairs(Value) do
+										ind = ind + 1
+									end
+									if ind == 1 then Selected = Value[1] else Selected = Value end
+								else
+									Selected = Value
+								end
+								
+								if NestedElement.Values.Callback then
+									pcall(NestedElement.Values.Callback, Selected)
+								end
 							end
-						end)
 
-						Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex] =
-							NestedElement
-						return NestedElement
+							Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex].Values =
+								NestedElement.Values
+						end
+					end)
+
+					Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[ParentIndex].NestedElements[NestedIndex] =
+						NestedElement
+					if NestedIndex then Starlight.Options[NestedIndex] = NestedElement end
+					function NestedElement:AddDependency(T, E) Starlight:AddDependency(self, "Element", T, E) return self end
+					return NestedElement
 					end
 
 					--// ENDSUBSECTION
@@ -8986,6 +9563,7 @@ function Starlight:CreateWindow(WindowSettings)
 						end
 
 						function Element:Destroy()
+							if not Element then return end
 							Element.Instance:Destroy()
 							if Element.NestedElements ~= nil then
 								for _, nestedElement in pairs(Element.NestedElements) do
@@ -9000,6 +9578,67 @@ function Starlight:CreateWindow(WindowSettings)
 					return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex].Elements[Index]
 				end
 
+				function Groupbox:AddLabel(Settings)
+					if type(Settings) == "string" then
+						Settings = { Text = Settings }
+					end
+					return self:CreateParagraph({ Name = Settings.Text or "", Content = "" }, "Label_"..tostring(math.random(1000,9999)))
+				end
+
+				function Groupbox:AddCheckbox(Index, Settings)
+					return self:CreateToggle(Settings, Index)
+				end
+
+				function Groupbox:AddDivider()
+					local div = Instance.new("Frame")
+					div.Size = UDim2.new(1, 0, 0, 1)
+					div.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+					div.BorderSizePixel = 0
+					div.Parent = Groupbox.ParentingItem
+					return div
+				end
+				
+				function Groupbox:AddUIPassthrough(Index, Settings)
+					local container = Instance.new("Frame")
+					container.Size = UDim2.new(1, 0, 0, Settings.Height or 24)
+					container.BackgroundTransparency = 1
+					container.Parent = Groupbox.ParentingItem
+					if Settings.Instance then
+						Settings.Instance.Parent = container
+					end
+					return container
+				end
+				
+				function Groupbox:AddViewport(Index, Settings)
+					local container = Instance.new("ViewportFrame")
+					container.Size = UDim2.new(1, 0, 0, Settings.Height or 200)
+					container.BackgroundTransparency = 1
+					container.Parent = Groupbox.ParentingItem
+					if Settings.Object then Settings.Object.Parent = container end
+					if Settings.Camera then container.CurrentCamera = Settings.Camera end
+					return container
+				end
+				
+				function Groupbox:AddImage(Index, Settings)
+					local container = Instance.new("ImageLabel")
+					container.Size = UDim2.new(1, 0, 0, Settings.Height or 200)
+					container.BackgroundTransparency = 1
+					container.Image = Settings.Image or ""
+					container.Parent = Groupbox.ParentingItem
+					return container
+				end
+				
+				function Groupbox:AddVideo(Index, Settings)
+					local container = Instance.new("VideoFrame")
+					container.Size = UDim2.new(1, 0, 0, Settings.Height or 200)
+					container.BackgroundTransparency = 1
+					container.Video = Settings.Video or ""
+					container.Looped = Settings.Looped or false
+					container.Playing = Settings.Playing or false
+					container.Parent = Groupbox.ParentingItem
+					return container
+				end
+
 				--// ENDSUBSECTION
 
 				Groupbox.Instance.Parent = Tab.Instances.Page["Column_" .. GroupboxSettings.Column]
@@ -9007,9 +9646,116 @@ function Starlight:CreateWindow(WindowSettings)
 				return Starlight.Window.TabSections[Name].Tabs[TabIndex].Groupboxes[GroupIndex]
 			end
 
-			--function Tab:CreateTabbox(TabboxSettings) -- coming soon
+			local function CreateTabbox(self, Title, Column)
+				local gb = self:CreateGroupbox({ Name = Title, Column = Column }, "Tabbox_"..tostring(math.random(1000,9999)))
+				gb.ClassName = "TabBox"
+				
+				-- Hide the default Groupbox Header if desired, or keep it. Let's keep it for aesthetic, but add a tab bar below it.
+				local tabBar = Instance.new("Frame")
+				tabBar.Name = "TabBar"
+				tabBar.BackgroundTransparency = 1
+				tabBar.Size = UDim2.new(1, 0, 0, 25)
+				tabBar.Parent = gb.ParentingItem
+				
+				local listLayout = Instance.new("UIListLayout")
+				listLayout.FillDirection = Enum.FillDirection.Horizontal
+				listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				listLayout.Padding = UDim.new(0, 4)
+				listLayout.Parent = tabBar
+				
+				gb.Tabs = {}
+				gb.ActiveTab = nil
+				
+				function gb:AddTab(tabTitle)
+					local btn = Instance.new("TextButton")
+					btn.Name = "TabButton_" .. tabTitle
+					btn.Size = UDim2.new(0, 50, 1, 0)
+					btn.AutomaticSize = Enum.AutomaticSize.X
+					btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+					btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+					btn.Text = " " .. tabTitle .. " "
+					btn.Font = Enum.Font.GothamMedium
+					btn.TextSize = 12
+					btn.Parent = tabBar
+					
+					ThemeMethods.bindTheme(btn, "BackgroundColor3", "Backgrounds.Light")
+					ThemeMethods.bindTheme(btn, "TextColor3", "Foregrounds.Medium")
+					
+					local container = Instance.new("Frame")
+					container.Name = "Container_" .. tabTitle
+					container.BackgroundTransparency = 1
+					container.Size = UDim2.new(1, 0, 0, 0)
+					container.AutomaticSize = Enum.AutomaticSize.Y
+					container.Visible = false
+					container.Parent = gb.ParentingItem
+					
+					local containerLayout = Instance.new("UIListLayout")
+					containerLayout.SortOrder = Enum.SortOrder.LayoutOrder
+					containerLayout.Padding = UDim.new(0, 4)
+					containerLayout.Parent = container
+					
+					local tabObj = {
+						Name = tabTitle,
+						Button = btn,
+						Container = container,
+						ParentingItem = container
+					}
+					
+					-- Copy all Create methods from gb to tabObj so elements can be added to the tab container
+					for k, v in pairs(gb) do
+						if type(v) == "function" and string.match(k, "^Create") then
+							tabObj[k] = function(self_tab, ...)
+								local origParentingItem = gb.ParentingItem
+								gb.ParentingItem = container
+								local result = v(gb, ...)
+								gb.ParentingItem = origParentingItem
+								return result
+							end
+						end
+					end
+					
+					btn.MouseButton1Click:Connect(function()
+						if gb.ActiveTab then
+							gb.ActiveTab.Container.Visible = false
+							ThemeMethods.bindTheme(gb.ActiveTab.Button, "TextColor3", "Foregrounds.Medium")
+						end
+						gb.ActiveTab = tabObj
+						container.Visible = true
+						ThemeMethods.bindTheme(btn, "TextColor3", "Accents.Main")
+					end)
+					
+					if not gb.ActiveTab then
+						btn.MouseButton1Click:Fire()
+					end
+					
+					table.insert(gb.Tabs, tabObj)
+					return tabObj
+				end
+				
+				return gb
+			end
 
-			--end
+			function Tab:AddLeftTabbox(Title)
+				return CreateTabbox(self, Title, 1)
+			end
+
+			function Tab:AddRightTabbox(Title)
+				return CreateTabbox(self, Title, 2)
+			end
+
+			function Tab:AddDependencyGroupbox(Title, Column, Target, Expected)
+				local gb = self:CreateGroupbox({ Name = Title, Column = Column }, "DepGroupbox_"..tostring(math.random(1000,9999)))
+				gb.ParentingItem.Parent.Parent.Visible = false
+				
+				Starlight:AddDependency({ ParentingItem = gb.ParentingItem }, "DependencyGroupbox", Target, Expected)
+				
+				function gb:AddDependency(T, E)
+					Starlight:AddDependency({ ParentingItem = self.ParentingItem }, "DependencyGroupbox", T, E)
+					return self
+				end
+				
+				return gb
+			end
 
 			function Tab:BuildThemeGroupbox(Column, Style, ButtonsCentered)
 				if ButtonsCentered == nil then
@@ -10215,19 +10961,45 @@ function Starlight:CreateWindow(WindowSettings)
 				mainWindow.Content.Topbar.NotificationCenterIcon,
 				{ ImageColor3 = Starlight.CurrentTheme.Foregrounds.DarkHover }
 			)
+			if notifSlash then
+				Tween(notifSlash, { TextColor3 = Starlight.CurrentTheme.Foregrounds.DarkHover })
+			end
 		end)
 		mainWindow.Content.Topbar.NotificationCenterIcon["MouseLeave"]:Connect(function()
 			Tween(
 				mainWindow.Content.Topbar.NotificationCenterIcon,
 				{ ImageColor3 = Starlight.CurrentTheme.Foregrounds.Dark }
 			)
+			if notifSlash then
+				Tween(notifSlash, { TextColor3 = Starlight.CurrentTheme.Foregrounds.Dark })
+			end
 		end)
 
 		local notifdebounce = false
+		notifSlash = Instance.new("TextLabel")
+		notifSlash.Name = "Slash"
+		notifSlash.Size = UDim2.new(1.4, 0, 1.4, 0)
+		notifSlash.Position = UDim2.new(-0.2, 0, -0.2, 0)
+		notifSlash.BackgroundTransparency = 1
+		notifSlash.Text = "\\"
+		notifSlash.TextColor3 = Color3.new(1, 1, 1)
+		notifSlash.TextSize = 18
+		notifSlash.Font = Enum.Font.GothamBold
+		notifSlash.Visible = not Starlight.NotificationsOpen
+		notifSlash.ZIndex = 50
+		notifSlash.Parent = mainWindow.Content.Topbar.NotificationCenterIcon
+		ThemeMethods.bindTheme(notifSlash, "TextColor3", "Foregrounds.Dark")
+		
+		local slashStroke = Instance.new("UIStroke")
+		slashStroke.Thickness = 1.5
+		slashStroke.Parent = notifSlash
+		ThemeMethods.bindTheme(slashStroke, "Color", "Backgrounds.Medium")
+
 		mainWindow.Content.Topbar.NotificationCenterIcon["MouseButton1Click"]:Connect(function()
 			if not notifdebounce then
 				notifdebounce = true
 				if Starlight.NotificationsOpen then
+					notifSlash.Visible = true
 					for i, newNotification in pairs(CollectionService:GetTagged("__starlight_ExpiredNotification")) do
 						newNotification.Icon.Visible = false
 						TweenService:Create(
@@ -10307,6 +11079,7 @@ function Starlight:CreateWindow(WindowSettings)
 						end, TweenInfo.new(1, Enum.EasingStyle.Exponential))
 					end
 				else
+					notifSlash.Visible = false
 					for i, newNotification in pairs(CollectionService:GetTagged("__starlight_ExpiredNotification")) do
 						task.spawn(function()
 							newNotification.Icon.Visible = true
@@ -10398,6 +11171,85 @@ function Starlight:CreateWindow(WindowSettings)
 		mainWindow.Content.Topbar.Search["MouseLeave"]:Connect(function()
 			Tween(mainWindow.Content.Topbar.Search, { ImageColor3 = Starlight.CurrentTheme.Foregrounds.Dark })
 		end)
+
+		-- Search bar creation
+		local searchBar = Instance.new("TextBox")
+		searchBar.Name = "SearchBar"
+		searchBar.Size = UDim2.new(0, 0, 0, 24)
+		searchBar.AnchorPoint = Vector2.new(0.5, 0.5)
+		searchBar.Position = UDim2.new(0.5, 0, 0.5, 0)
+		searchBar.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+		searchBar.TextColor3 = Color3.new(1, 1, 1)
+		searchBar.PlaceholderText = "Search elements..."
+		searchBar.PlaceholderColor3 = Color3.fromRGB(120, 120, 140)
+		searchBar.Text = ""
+		searchBar.TextSize = 11
+		searchBar.ClearTextOnFocus = false
+		searchBar.Visible = false
+		searchBar.ZIndex = 10
+		searchBar.ClipsDescendants = true
+		ThemeMethods.bindTheme(searchBar, "BackgroundColor3", "Backgrounds.Groupbox")
+		searchBar.Parent = mainWindow.Content.Topbar
+		local searchCorner = Instance.new("UICorner")
+		searchCorner.CornerRadius = UDim.new(0, 6)
+		searchCorner.Parent = searchBar
+		local searchStroke = Instance.new("UIStroke")
+		ThemeMethods.bindTheme(searchStroke, "Color", "Foregrounds.Dark")
+		searchStroke.Parent = searchBar
+		local searchPad = Instance.new("UIPadding")
+		searchPad.PaddingLeft = UDim.new(0, 6)
+		searchPad.Parent = searchBar
+
+		local searchOpen = false
+		mainWindow.Content.Topbar.Search["MouseButton1Click"]:Connect(function()
+			searchOpen = not searchOpen
+			if searchOpen then
+				searchBar.Visible = true
+				searchBar:CaptureFocus()
+				Tween(searchBar, { Size = UDim2.new(0, 240, 0, 24) }, nil, TweenInfo.new(0.4, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out))
+			else
+				Tween(searchBar, { Size = UDim2.new(0, 0, 0, 24) }, function()
+					searchBar.Text = ""
+					searchBar.Visible = false
+				end, TweenInfo.new(0.4, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out))
+				
+				-- restore all elements when closing
+				for _, section in pairs(Starlight.Window and Starlight.Window.TabSections or {}) do
+					for _, tab in pairs(section.Tabs) do
+						for _, groupbox in pairs(tab.Groupboxes) do
+							for _, element in pairs(groupbox.Elements) do
+								if element and element.Instance then
+									element.Instance.Visible = true
+								end
+							end
+						end
+					end
+				end
+			end
+		end)
+
+		searchBar:GetPropertyChangedSignal("Text"):Connect(function()
+			local query = string.lower(searchBar.Text)
+			for _, section in pairs(Starlight.Window and Starlight.Window.TabSections or {}) do
+				for _, tab in pairs(section.Tabs) do
+					for _, groupbox in pairs(tab.Groupboxes) do
+						local anyVisible = false
+						for _, element in pairs(groupbox.Elements) do
+							if element and element.Instance then
+								local name = string.lower(element.Values and (element.Values.Name or element.Values.Text or element.Values.Title or "") or "")
+								local isVisible = query == "" or string.find(name, query, 1, true) ~= nil
+								element.Instance.Visible = isVisible
+								if isVisible then anyVisible = true end
+							end
+						end
+						if groupbox.Instance then
+							groupbox.Instance.Visible = anyVisible
+						end
+					end
+				end
+			end
+		end)
+
 
 		for _, Button in pairs(mainWindow.Content.Topbar.Controls:GetChildren()) do
 			if Button.ClassName == "TextButton" then
@@ -11145,5 +11997,469 @@ end --]=]0
 	Duration = 10,
 	Icon = 105789146907268,
 })]]
+
+function Starlight:CreateLoading(config)
+	config = config or {}
+	local Title = config.Title or "Loading"
+	local TotalSteps = config.TotalSteps or 10
+	local Icon = config.Icon or "rbxassetid://95816097006870"
+	
+	local loaderGui = Instance.new("ScreenGui")
+	loaderGui.Name = "StarlightLoader"
+	loaderGui.IgnoreGuiInset = true
+	loaderGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+	
+	if RunService:IsStudio() then
+		loaderGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+	else
+		local success, result = pcall(function() return game:GetService("CoreGui") end)
+		if success and result then
+			loaderGui.Parent = result
+		else
+			loaderGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+		end
+	end
+
+	local main = Instance.new("Frame")
+	main.Name = "Main"
+	main.Size = UDim2.new(0, config.WindowWidth or 450, 0, config.WindowHeight or 275)
+	main.Position = UDim2.new(0.5, 0, 0.5, 0)
+	main.AnchorPoint = Vector2.new(0.5, 0.5)
+	main.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+	main.Parent = loaderGui
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = main
+	
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(40, 40, 50)
+	stroke.Thickness = 1
+	stroke.Parent = main
+	
+	local titleLbl = Instance.new("TextLabel")
+	titleLbl.Size = UDim2.new(1, 0, 0, 40)
+	titleLbl.Position = UDim2.new(0, 0, 0, 10)
+	titleLbl.BackgroundTransparency = 1
+	titleLbl.Text = Title
+	titleLbl.TextColor3 = Color3.new(1, 1, 1)
+	titleLbl.TextSize = 20
+	titleLbl.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.Bold)
+	titleLbl.Parent = main
+	
+	local descLbl = Instance.new("TextLabel")
+	descLbl.Size = UDim2.new(1, 0, 0, 30)
+	descLbl.Position = UDim2.new(0, 0, 0.5, -15)
+	descLbl.BackgroundTransparency = 1
+	descLbl.Text = "Initializing..."
+	descLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+	descLbl.TextSize = 14
+	descLbl.FontFace = Font.new("rbxassetid://12187365364")
+	descLbl.Parent = main
+	
+	local progressBarBg = Instance.new("Frame")
+	progressBarBg.Size = UDim2.new(0.8, 0, 0, 8)
+	progressBarBg.Position = UDim2.new(0.1, 0, 0.8, 0)
+	progressBarBg.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+	progressBarBg.Parent = main
+	local pCorner = Instance.new("UICorner", progressBarBg)
+	pCorner.CornerRadius = UDim.new(0, 4)
+	
+	local progressBar = Instance.new("Frame")
+	progressBar.Size = UDim2.new(0, 0, 1, 0)
+	progressBar.BackgroundColor3 = Color3.fromRGB(70, 130, 255)
+	progressBar.Parent = progressBarBg
+	local pCorner2 = Instance.new("UICorner", progressBar)
+	pCorner2.CornerRadius = UDim.new(0, 4)
+	
+	local loaderObj = {
+		CurrentStep = 0,
+		TotalSteps = TotalSteps
+	}
+	
+	function loaderObj:SetMessage(msg)
+		titleLbl.Text = msg
+	end
+	
+	function loaderObj:SetDescription(desc)
+		descLbl.Text = desc
+	end
+	
+	function loaderObj:SetCurrentStep(step)
+		self.CurrentStep = step
+		TweenService:Create(progressBar, TweenInfo.new(0.3), {
+			Size = UDim2.new(math.clamp(self.CurrentStep / self.TotalSteps, 0, 1), 0, 1, 0)
+		}):Play()
+	end
+	
+	function loaderObj:SetTotalSteps(steps)
+		self.TotalSteps = steps
+	end
+	
+	function loaderObj:Destroy()
+		loaderGui:Destroy()
+	end
+	
+	function loaderObj:Continue()
+		self:Destroy()
+	end
+	
+	return loaderObj
+end
+
+Starlight.ImageManager = {
+	Assets = {}
+}
+
+function Starlight.ImageManager.AddAsset(name, fallbackId, url, forceRedownload)
+	Starlight.ImageManager.Assets[name] = {
+		Id = fallbackId,
+		Url = url
+	}
+	Starlight.ImageManager.DownloadAsset(name, forceRedownload)
+end
+
+function Starlight.ImageManager.GetAsset(name)
+	local asset = Starlight.ImageManager.Assets[name]
+	if not asset then return nil end
+	
+	local folderName = "StarlightUI_Assets"
+	local fileName = folderName .. "/" .. name .. ".png"
+	
+	local hasCustomAsset = type(getcustomasset) == "function"
+	local hasReadFile = type(readfile) == "function"
+	local hasIsFile = type(isfile) == "function"
+	
+	if hasCustomAsset and hasReadFile and hasIsFile then
+		if isfile(fileName) then
+			return getcustomasset(fileName)
+		end
+	end
+	
+	return "rbxassetid://" .. tostring(asset.Id)
+end
+
+function Starlight.ImageManager.DownloadAsset(name, forceRedownload)
+	local asset = Starlight.ImageManager.Assets[name]
+	if not asset or not asset.Url then return end
+	
+	local hasCustomAsset = type(getcustomasset) == "function"
+	local hasWriteFile = type(writefile) == "function"
+	local hasIsFolder = type(isfolder) == "function"
+	local hasMakeFolder = type(makefolder) == "function"
+	local hasIsFile = type(isfile) == "function"
+	
+	if not (hasCustomAsset and hasWriteFile and hasIsFolder and hasMakeFolder and hasIsFile) then return end
+	
+	local folderName = "StarlightUI_Assets"
+	if not isfolder(folderName) then
+		pcall(makefolder, folderName)
+	end
+	
+	local fileName = folderName .. "/" .. name .. ".png"
+	
+	if not forceRedownload and isfile(fileName) then
+		return
+	end
+	
+	local success, result = pcall(function()
+		return game:HttpGet(asset.Url)
+	end)
+	
+	if success and result then
+		pcall(writefile, fileName, result)
+	end
+end
+
+function Starlight:SetBackground(url)
+	if not Starlight.ImageManager then return end
+	local bg = StarlightUI.MainWindow:FindFirstChild("CustomBackground")
+	if not bg then
+		bg = Instance.new("ImageLabel")
+		bg.Name = "CustomBackground"
+		bg.Size = UDim2.new(1, 0, 1, 0)
+		bg.Position = UDim2.new(0, 0, 0, 0)
+		bg.BackgroundTransparency = 1
+		bg.ZIndex = -1 
+		bg.ScaleType = Enum.ScaleType.Crop
+		
+		-- Try to keep rounded corners matching the main window
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 8)
+		corner.Parent = bg
+		
+		-- Overlay to make text legible
+		local overlay = Instance.new("Frame")
+		overlay.Size = UDim2.new(1, 0, 1, 0)
+		overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+		overlay.BackgroundTransparency = 0.6
+		overlay.ZIndex = 0
+		overlay.BorderSizePixel = 0
+		
+		local corner2 = Instance.new("UICorner")
+		corner2.CornerRadius = UDim.new(0, 8)
+		corner2.Parent = overlay
+		
+		overlay.Parent = bg
+		bg.Parent = StarlightUI.MainWindow
+	end
+	
+	local isVideo = url:lower():match("%.mp4$") or url:lower():match("%.webm$")
+	
+	if isVideo then
+		-- Convert to VideoFrame
+		bg:Destroy()
+		bg = Instance.new("VideoFrame")
+		bg.Name = "CustomBackground"
+		bg.Size = UDim2.new(1, 0, 1, 0)
+		bg.BackgroundTransparency = 1
+		bg.ZIndex = -1
+		bg.Looped = true
+		bg.Playing = true
+		
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 8)
+		corner.Parent = bg
+		
+		local overlay = Instance.new("Frame")
+		overlay.Size = UDim2.new(1, 0, 1, 0)
+		overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+		overlay.BackgroundTransparency = 0.6
+		overlay.ZIndex = 0
+		overlay.BorderSizePixel = 0
+		local corner2 = Instance.new("UICorner")
+		corner2.CornerRadius = UDim.new(0, 8)
+		corner2.Parent = overlay
+		
+		overlay.Parent = bg
+		bg.Parent = StarlightUI.MainWindow
+	end
+
+	-- Simple direct fallback if valid URL format without downloading through ImageManager,
+	-- as ImageManager expects fixed names. We can just use writefile dynamically.
+	if url:match("^http") then
+		local ext = url:match("%.([^%.]+)$") or "png"
+		if ext:find("?") then ext = ext:split("?")[1] end
+		local uniqueName = "bg_" .. tostring(math.random(100000, 999999))
+		Starlight.ImageManager.AddAsset(uniqueName, 0, url, true)
+		if bg:IsA("VideoFrame") then
+			bg.Video = Starlight.ImageManager.GetAsset(uniqueName)
+		else
+			bg.Image = Starlight.ImageManager.GetAsset(uniqueName)
+		end
+	else
+		-- Direct asset id or file path
+		if bg:IsA("VideoFrame") then
+			bg.Video = url
+		else
+			bg.Image = url
+		end
+	end
+end
+
+function Starlight:AddDraggableLabel(text)
+	local label = Instance.new("TextLabel")
+	label.Name = "DraggableLabel"
+	label.Size = UDim2.new(0, 150, 0, 30)
+	label.Position = UDim2.new(0, 50, 0, 50)
+	label.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+	label.Text = text
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextSize = 14
+	label.FontFace = Font.new("rbxassetid://12187365364")
+	label.Parent = StarlightUI.MainWindow.Parent
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 4)
+	corner.Parent = label
+	
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(50, 50, 60)
+	layout.Parent = container
+	stroke.Parent = label
+	
+	makeDraggable(label, label)
+	
+	local obj = {}
+	function obj:SetText(t) label.Text = t end
+	function obj:SetVisible(v) label.Visible = v end
+	return obj
+end
+
+function Starlight:AddDraggableButton(text, callback)
+	local btn = Instance.new("TextButton")
+	btn.Name = "DraggableButton"
+	btn.Size = UDim2.new(0, 150, 0, 30)
+	btn.Position = UDim2.new(0, 50, 0, 100)
+	btn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+	btn.Text = text
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.TextSize = 14
+	btn.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.Bold)
+	btn.Parent = StarlightUI.MainWindow.Parent
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 4)
+	corner.Parent = btn
+	
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(60, 60, 70)
+	stroke.Parent = btn
+	
+	makeDraggable(btn, btn)
+	
+	local obj = {}
+	btn.MouseButton1Click:Connect(function()
+		if callback then callback(obj) end
+	end)
+	
+	function obj:SetText(t) btn.Text = t end
+	return obj
+end
+
+function Starlight:AddDraggableMenu(title)
+	local holder = Instance.new("Frame")
+	holder.Name = "DraggableMenu"
+	holder.Size = UDim2.new(0, 200, 0, 300)
+	holder.Position = UDim2.new(0, 50, 0, 150)
+	holder.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+	holder.Parent = StarlightUI.MainWindow.Parent
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = holder
+	
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(40, 40, 50)
+	stroke.Parent = holder
+	
+	local topbar = Instance.new("Frame")
+	topbar.Size = UDim2.new(1, 0, 0, 30)
+	topbar.BackgroundTransparency = 1
+	topbar.Parent = holder
+	
+	local titleLbl = Instance.new("TextLabel")
+	titleLbl.Size = UDim2.new(1, -10, 1, 0)
+	titleLbl.Position = UDim2.new(0, 10, 0, 0)
+	titleLbl.BackgroundTransparency = 1
+	titleLbl.Text = title
+	titleLbl.TextColor3 = Color3.new(1, 1, 1)
+	titleLbl.TextSize = 14
+	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+	titleLbl.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.Bold)
+	titleLbl.Parent = topbar
+	
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, -10, 1, -40)
+	container.Position = UDim2.new(0, 5, 0, 35)
+	container.BackgroundTransparency = 1
+	container.Parent = holder
+	
+	local layout = Instance.new("UIListLayout")
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = container
+	
+	makeDraggable(topbar, holder)
+	return holder, container
+end
+
+-- Keybind Menu
+Starlight.KeybindFrame = Instance.new("Frame")
+Starlight.KeybindFrame.Name = "KeybindFrame"
+Starlight.KeybindFrame.Size = UDim2.new(0, 200, 0, 30)
+Starlight.KeybindFrame.Position = UDim2.new(0, 300, 0, 50)
+Starlight.KeybindFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+Starlight.KeybindFrame.Visible = false
+Starlight.KeybindFrame.AutomaticSize = Enum.AutomaticSize.Y
+Starlight.KeybindFrame.Parent = StarlightUI.MainWindow.Parent
+
+local kfCorner = Instance.new("UICorner")
+kfCorner.CornerRadius = UDim.new(0, 6)
+kfCorner.Parent = Starlight.KeybindFrame
+
+local kfStroke = Instance.new("UIStroke")
+kfStroke.Color = Color3.fromRGB(40, 40, 50)
+kfStroke.Parent = Starlight.KeybindFrame
+
+local kfTopbar = Instance.new("Frame")
+kfTopbar.Size = UDim2.new(1, 0, 0, 30)
+kfTopbar.BackgroundTransparency = 1
+kfTopbar.Parent = Starlight.KeybindFrame
+
+local kfTitle = Instance.new("TextLabel")
+kfTitle.Size = UDim2.new(1, -10, 1, 0)
+kfTitle.Position = UDim2.new(0, 10, 0, 0)
+kfTitle.BackgroundTransparency = 1
+kfTitle.Text = "Keybinds"
+kfTitle.TextColor3 = Color3.new(1, 1, 1)
+kfTitle.TextSize = 14
+kfTitle.TextXAlignment = Enum.TextXAlignment.Left
+kfTitle.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.Bold)
+kfTitle.Parent = kfTopbar
+
+makeDraggable(kfTopbar, Starlight.KeybindFrame)
+
+function Starlight:ChangeCursorIcon(id)
+	local success, _ = pcall(function() game:GetService("UserInputService").MouseIcon = id end)
+end
+
+function Starlight:SetFont(font)
+	Starlight.Font = font
+end
+
+function Starlight:SetDPIScale(scale)
+	Starlight.DPIScale = scale / 100
+	local uiScale = StarlightUI:FindFirstChild("UIScale")
+	if not uiScale then
+		uiScale = Instance.new("UIScale")
+		uiScale.Parent = StarlightUI
+	end
+	uiScale.Scale = Starlight.DPIScale
+end
+
+function Starlight:SetNotifySide(side)
+	Starlight.NotifySide = side
+end
+
+Starlight.UnloadCallbacks = {}
+function Starlight:OnUnload(callback)
+	table.insert(Starlight.UnloadCallbacks, callback)
+end
+
+function Starlight:Unload()
+	for _, cb in pairs(Starlight.UnloadCallbacks) do
+		pcall(cb)
+	end
+	Starlight.Unloaded = true
+	pcall(function()
+		game:GetService("RunService"):UnbindFromRenderStep("...")
+	end)
+	if StarlightUI then StarlightUI:Destroy() end
+end
+
+function Starlight:SafeCallback(func, ...)
+	local success, err = pcall(func, ...)
+	if not success and Starlight.NotifyOnError then
+		warn("Starlight Error: " .. tostring(err))
+	end
+	return success, err
+end
+
+function Starlight:GetTextBounds(text, font, size, maxwidth)
+	local ts = game:GetService("TextService")
+	local s, r = pcall(function()
+		return ts:GetTextSize(text, size, font, Vector2.new(maxwidth or 10000, 10000))
+	end)
+	return s and r or Vector2.new(0, 0)
+end
+
+task.spawn(function()
+	while task.wait(0.1) do
+		pcall(function()
+			Starlight:UpdateDependencies()
+		end)
+	end
+end)
 
 return Starlight
